@@ -65,7 +65,7 @@ export class WorkspaceService {
     const nodes: FileNode[] = [];
     for (const entry of entries) {
       if (entry.name === "." || entry.name === "..") continue;
-      if (entry.isDirectory() && SKIP_DIR_NAMES.has(entry.name)) continue;
+      if (entry.isDirectory() && (SKIP_DIR_NAMES.has(entry.name) || shouldSkipDir(entry.name, dirPath || ""))) continue;
 
       const full = join(absolute, entry.name);
       const rel = toWorkspaceRelative(root, full);

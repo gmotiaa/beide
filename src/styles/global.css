@@ -205,7 +205,8 @@ pre,
 .panel {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 10px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
 }
 
 .panel-flat {
@@ -220,10 +221,11 @@ pre,
   flex-direction: column;
   align-items: center;
   padding: 8px 0;
-  gap: 4px;
+  gap: 6px;
   background: var(--bg-elevated);
   border-right: 1px solid var(--border);
   z-index: 5;
+  backdrop-filter: blur(12px);
 }
 
 .activity-bar__spacer {
@@ -233,34 +235,35 @@ pre,
 .activity-btn {
   width: 36px;
   height: 36px;
-  border-radius: 8px;
+  border-radius: 10px;
   display: grid;
   place-items: center;
   color: var(--text-muted);
-  transition:
-    background 0.12s ease,
-    color 0.12s ease;
+  transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
   position: relative;
 }
 
 .activity-btn:hover {
   background: var(--panel-hover);
   color: var(--text);
+  transform: translateY(-1px);
 }
 
 .activity-btn.is-active {
-  color: var(--text);
+  color: var(--accent);
   background: var(--accent-muted);
+  box-shadow: 0 0 12px var(--accent-muted);
 }
 
 .activity-btn.is-active::before {
   content: "";
   position: absolute;
   left: -6px;
-  width: 2px;
+  width: 3px;
   height: 18px;
-  border-radius: 2px;
+  border-radius: 3px;
   background: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
 }
 
 .activity-btn svg {
