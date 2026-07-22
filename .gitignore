@@ -1,0 +1,57 @@
+# dependencies
+node_modules/
+
+# build
+out/
+dist/
+release/
+*.asar
+
+# beide runtime (per-workspace + local)
+.beide/checkpoints/
+.beide/sessions/
+.beide/cache/
+
+# logs & debug
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# env / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# editor / OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json.example
+*.swp
+*~
+
+# typescript
+*.tsbuildinfo
+
+# test / coverage
+coverage/
+.nyc_output/
+
+# electron-vite / vite
+.vite/
+*.local
+
+# HeroUI agent docs (from heroui-cli agents-md)
+.heroui-docs/
+
+# misc
+tmp/
+temp/
+.cache/

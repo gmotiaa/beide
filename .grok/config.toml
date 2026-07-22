@@ -1,0 +1,23 @@
+[mcp_servers.heroui-migration]
+url = "https://migration-mcp.heroui.com"
+enabled = true
+startup_timeout_sec = 60
+
+[mcp_servers.heroui-react]
+command = "npx"
+args = [
+    "-y",
+    "@heroui/react-mcp@latest",
+]
+enabled = true
+startup_timeout_sec = 90
+
+[mcp_servers.shadcn]
+command = "npx"
+args = [
+    "-y",
+    "shadcn@latest",
+    "mcp",
+]
+enabled = true
+startup_timeout_sec = 90

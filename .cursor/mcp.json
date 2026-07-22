@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "agent-elements": {
+      "command": "npx",
+      "args": ["-y", "shadcn@canary", "mcp"],
+      "env": {
+        "REGISTRY_URL": "https://agent-elements.21st.dev/r/index.json"
+      }
+    },
+    "heroui-migration": {
+      "url": "https://migration-mcp.heroui.com"
+    },
+    "heroui-react": {
+      "command": "npx",
+      "args": ["-y", "@heroui/react-mcp@latest"]
+    }
+  }
+}

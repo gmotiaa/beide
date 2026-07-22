@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -E \"^\\\\\\\\.env|^env\")",
+      "Bash(npx tsc *)"
+    ]
+  }
+}
