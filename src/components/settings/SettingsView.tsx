@@ -1,607 +1,141 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  IconBolt,
+  IconGauge,
   IconHistory,
-  IconLanguage,
   IconPalette,
   IconPlugConnected,
   IconRobot,
   IconShield,
-  IconSparkles,
-  IconUserCircle,
 } from "@tabler/icons-react";
-import type {
-  AgentMode,
-  LanguageId,
-  PermissionMode,
-  ThemeId,
-} from "../../lib/types";
-import {
-  PLANS,
-  canSpend,
-  formatResetAt,
-  formatResetIn,
-  msUntil,
-  remainingPct,
-  type UsagePlanId,
-} from "../../lib/usage";
-import { useSettingsStore } from "../../stores/settings";
-import { useAgentStore } from "../../stores/agent";
-import { useOnboardingStore } from "../../stores/onboarding";
-import { useAuthStore } from "../../stores/auth";
 import { useUsageStore } from "../../stores/usage";
-import { Badge } from "../ui/badge";
-import { Button } from "../ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "../ui/card";
-import { Input } from "../ui/input";
-import { Label } from "../ui/label";
-import { Progress } from "../ui/progress";
-import { Separator } from "../ui/separator";
-import { Switch } from "../ui/switch";
+import { appIconUrl } from "../../lib/assets";
 import { cn } from "../../lib/utils";
+import { Badge } from "../ui/badge";
+import { usageHeadline } from "./helpers";
+import { UsageSection } from "./UsageSection";
+import {
+  AgentSection,
+  AppearanceSection,
+  CheckpointsSection,
+  PrivacySection,
+  ProvidersSection,
+} from "./sections";
 
-function isRuLocale(lang?: string): string {
-  return lang?.startsWith("ru") ? "ru-RU" : "en-US";
+type SectionId =
+  | "account"
+  | "appearance"
+  | "agent"
+  | "providers"
+  | "privacy"
+  | "checkpoints";
+
+interface SectionDef {
+  id: SectionId;
+  icon: ReactNode;
+  labelKey: string;
+  render: () => ReactNode;
 }
 
-function ChoiceGroup({
-  options,
-  value,
-  onChange,
-}: {
-  options: { value: string; label: string; hint?: string }[];
-  value: string;
-  onChange: (v: string) => void;
-}) {
-  return (
-    <div className="settings-choice-grid">
-      {options.map((opt) => {
-        const active = opt.value === value;
-        return (
-          <button
-            key={opt.value}
-            type="button"
-            onClick={() => onChange(opt.value)}
-            className={cn(
-              "settings-choice",
-              active && "settings-choice--active",
-            )}
-          >
-            <span className="settings-choice__label">{opt.label}</span>
-            {opt.hint ? (
-              <span className="settings-choice__hint">{opt.hint}</span>
-            ) : null}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-/** Remaining % meter (token pool) */
-function RemainingCard({
-  title,
-  remaining,
-  resetLabel,
-  detail,
-}: {
-  title: string;
-  remaining: number;
-  resetLabel: string;
-  detail?: string;
-}) {
-  const { t } = useTranslation();
-  const empty = remaining <= 0.05;
-  const low = remaining > 0 && remaining < 25;
-  return (
-    <div className="usage-limit-card">
-      <div className="usage-limit-card__title">{title}</div>
-      <div
-        className={cn(
-          "usage-limit-card__pct tabular-nums",
-          empty && "is-empty",
-          low && "is-low",
-        )}
-      >
-        {Math.round(remaining)} %{" "}
-        <span className="usage-limit-card__pct-label">
-          {t("settings.remaining")}
-        </span>
-      </div>
-      {detail ? (
-        <div className="usage-limit-card__detail tabular-nums">{detail}</div>
-      ) : null}
-      <Progress
-        value={remaining}
-        className={cn(
-          "usage-limit-card__bar w-full",
-          empty && "[&_[data-slot=progress-indicator]]:bg-muted-foreground/30",
-          !empty &&
-            !low &&
-            "[&_[data-slot=progress-indicator]]:bg-[color:var(--success)]",
-          low && "[&_[data-slot=progress-indicator]]:bg-[color:var(--warning)]",
-        )}
-      />
-      <div className="usage-limit-card__reset">
-        {t("settings.resetAt", { time: resetLabel })}
-      </div>
-    </div>
-  );
-}
+const SECTIONS: SectionDef[] = [
+  {
+    id: "account",
+    icon: <IconGauge className="size-4" stroke={1.75} />,
+    labelKey: "settings.navAccount",
+    render: () => <UsageSection />,
+  },
+  {
+    id: "appearance",
+    icon: <IconPalette className="size-4" stroke={1.75} />,
+    labelKey: "settings.navAppearance",
+    render: () => <AppearanceSection />,
+  },
+  {
+    id: "agent",
+    icon: <IconRobot className="size-4" stroke={1.75} />,
+    labelKey: "settings.navAgent",
+    render: () => <AgentSection />,
+  },
+  {
+    id: "providers",
+    icon: <IconPlugConnected className="size-4" stroke={1.75} />,
+    labelKey: "settings.navProviders",
+    render: () => <ProvidersSection />,
+  },
+  {
+    id: "privacy",
+    icon: <IconShield className="size-4" stroke={1.75} />,
+    labelKey: "settings.navPrivacy",
+    render: () => <PrivacySection />,
+  },
+  {
+    id: "checkpoints",
+    icon: <IconHistory className="size-4" stroke={1.75} />,
+    labelKey: "settings.navCheckpoints",
+    render: () => <CheckpointsSection />,
+  },
+];
 
 export function SettingsView() {
-  const { t, i18n } = useTranslation();
-  const settings = useSettingsStore((s) => s.settings);
-  const update = useSettingsStore((s) => s.update);
-  const checkpoints = useSettingsStore((s) => s.checkpoints);
-  const refreshCheckpoints = useSettingsStore((s) => s.refreshCheckpoints);
-  const restoreCheckpoint = useSettingsStore((s) => s.restoreCheckpoint);
-  const modelFromAgent = useAgentStore((s) => s.model);
-  const providers = useAgentStore((s) => s.providers);
-  const refreshProviders = useAgentStore((s) => s.refreshProviders);
-  const resetOnboarding = useOnboardingStore((s) => s.reset);
-  const user = useAuthStore((s) => s.user);
+  const { t } = useTranslation();
+  const [active, setActive] = useState<SectionId>("account");
   const usageData = useUsageStore((s) => s.data);
-  const usageSource = useUsageStore((s) => s.source);
-  const accountEmail = useUsageStore((s) => s.accountEmail);
   const loadUsage = useUsageStore((s) => s.load);
 
   useEffect(() => {
-    void refreshCheckpoints();
     void loadUsage();
-    // Credentials can change outside the app (`pi auth login` in a terminal),
-    // so re-read them every time the screen opens.
-    void refreshProviders();
-  }, [refreshCheckpoints, loadUsage, refreshProviders]);
+  }, [loadUsage]);
 
-  const limits = PLANS[usageData.plan];
-  const h5Left = remainingPct(usageData.h5.used, limits.tokens5h);
-  const weekLeft = remainingPct(usageData.week.used, limits.tokensWeek);
-  const gate = useMemo(() => canSpend(usageData, 48), [usageData]);
-  const h5Reset = useMemo(
-    () => formatResetAt(usageData.h5.endsAt, isRuLocale(i18n.language)),
-    [usageData.h5.endsAt, i18n.language],
-  );
-  const weekReset = useMemo(
-    () => formatResetAt(usageData.week.endsAt, isRuLocale(i18n.language)),
-    [usageData.week.endsAt, i18n.language],
-  );
-  const h5In = useMemo(
-    () => formatResetIn(msUntil(usageData.h5.endsAt)),
-    [usageData.h5.endsAt, usageData.h5.used],
-  );
-  const fmtTok = (n: number) =>
-    n >= 1000 ? `${Math.round(n / 1000)}k` : String(n);
+  // Only the tightest of the two windows is worth showing in the nav.
+  const quota = useMemo(() => usageHeadline(usageData), [usageData]);
+  const current = SECTIONS.find((s) => s.id === active) ?? SECTIONS[0];
 
   return (
     <div className="settings-view">
       <div className="settings-view__inner">
         <header className="settings-view__hero">
-          <div className="flex items-start gap-3">
-            <div className="settings-view__logo" aria-hidden>
-              <img src="/icon.svg" alt="" className="size-10 rounded-[11px]" />
-            </div>
-            <div>
-              <h1>{t("settings.title")}</h1>
-              <p className="settings-view__lead">{t("settings.lead")}</p>
-            </div>
+          <div className="settings-view__logo" aria-hidden>
+            <img src={appIconUrl} alt="" className="size-9 rounded-[10px]" />
           </div>
-          <Badge variant="secondary" className="font-normal">
+          <div className="min-w-0 flex-1">
+            <h1>{t("settings.title")}</h1>
+            <p className="settings-view__lead">{t("settings.lead")}</p>
+          </div>
+          <Badge variant="secondary" className="shrink-0 font-normal">
             beide
           </Badge>
         </header>
 
-        <div className="settings-grid">
-          {/* Token usage panel */}
-          <Card
-            size="sm"
-            className="settings-card settings-card--wide settings-card--usage"
-          >
-            <CardHeader className="gap-1 border-b border-border/60 pb-4">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <CardTitle className="text-base">
-                    {t("settings.usagePanel")}
-                  </CardTitle>
-                  <CardDescription className="mt-1">
-                    {t("settings.usageHint")}
-                  </CardDescription>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Badge
-                    variant={usageSource === "supabase" ? "default" : "outline"}
-                    className="h-6 px-2 font-normal"
+        <div className="settings-layout">
+          <nav className="settings-nav" aria-label={t("settings.title")}>
+            {SECTIONS.map((section) => (
+              <button
+                key={section.id}
+                type="button"
+                onClick={() => setActive(section.id)}
+                aria-current={section.id === active ? "page" : undefined}
+                className={cn(
+                  "settings-nav__item",
+                  section.id === active && "settings-nav__item--active",
+                )}
+              >
+                <span className="settings-nav__icon">{section.icon}</span>
+                <span className="settings-nav__label">{t(section.labelKey)}</span>
+                {section.id === "account" ? (
+                  <span
+                    className={cn(
+                      "settings-nav__meta tabular-nums",
+                      quota.low && "is-low",
+                    )}
                   >
-                    {usageSource === "supabase"
-                      ? "Supabase"
-                      : t("settings.localAccount")}
-                  </Badge>
-                  <Badge
-                    variant={usageData.plan === "pro" ? "default" : "outline"}
-                    className="h-6 px-2.5 font-semibold tracking-wide uppercase"
-                  >
-                    {limits.label}
-                  </Badge>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-5 pt-5">
-              {usageSource !== "supabase" && (
-                <div className="usage-limit-banner usage-limit-banner--info">
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm font-medium">
-                      {t("settings.cloudBillingHintTitle")}
-                    </div>
-                    <p className="mt-0.5 text-xs text-muted-foreground">
-                      {t("settings.cloudBillingHintBody")}
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {!gate.ok && (
-                <div className="usage-limit-banner">
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm font-medium">
-                      {t("settings.limitReached")}
-                    </div>
-                    <p className="mt-0.5 text-xs text-muted-foreground">
-                      {gate.reason ?? t("settings.limitReachedHint")}{" "}
-                      {t("settings.resetIn", { time: h5In })}
-                    </p>
-                  </div>
-                  <div className="flex shrink-0 gap-2">
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="secondary"
-                      onClick={() => void loadUsage()}
-                    >
-                      {t("settings.refresh")}
-                    </Button>
-                  </div>
-                </div>
-              )}
-
-              <div className="usage-account">
-                <div className="usage-account__left">
-                  <IconUserCircle
-                    className="size-8 text-muted-foreground"
-                    stroke={1.5}
-                  />
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-medium">
-                      {accountEmail ?? user?.email ?? t("settings.localAccount")}
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      {usageSource === "supabase"
-                        ? t("settings.signedInCloud")
-                        : user
-                          ? t("settings.signedIn")
-                          : t("settings.localAccountHint")}
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              <div>
-                <h3 className="mb-3 text-sm font-semibold tracking-tight">
-                  {t("settings.balance")}
-                </h3>
-                <div className="usage-limit-grid">
-                  <RemainingCard
-                    title={t("settings.limit5h")}
-                    remaining={h5Left}
-                    resetLabel={h5Reset}
-                    detail={`${fmtTok(usageData.h5.used)} / ${fmtTok(limits.tokens5h)} tok`}
-                  />
-                  <RemainingCard
-                    title={t("settings.limitWeek")}
-                    remaining={weekLeft}
-                    resetLabel={weekReset}
-                    detail={`${fmtTok(usageData.week.used)} / ${fmtTok(limits.tokensWeek)} tok`}
-                  />
-                  <div className="usage-limit-card">
-                    <div className="usage-limit-card__title">
-                      {t("settings.creditsLeft")}
-                    </div>
-                    <div className="usage-limit-card__pct tabular-nums">
-                      {fmtTok(usageData.credits)}
-                      <span className="usage-limit-card__pct-label"> tok</span>
-                    </div>
-                    <p className="text-xs leading-snug text-muted-foreground">
-                      {t("settings.creditsHint")}
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              <Separator />
-
-              <div className="flex flex-col gap-2">
-                <Label>{t("settings.plan")}</Label>
-                <div className="settings-choice-grid">
-                  {(Object.keys(PLANS) as UsagePlanId[]).map((id) => {
-                    const plan = PLANS[id];
-                    const active = usageData.plan === id;
-                    return (
-                      <div
-                        key={id}
-                        className={cn(
-                          "settings-choice settings-choice--plan select-none opacity-90 cursor-default",
-                          active && "settings-choice--active opacity-100",
-                        )}
-                      >
-                        <span className="settings-choice__label flex items-center gap-1.5">
-                          {plan.label}
-                          {id === "pro" ? (
-                            <IconSparkles className="size-3.5 text-primary" />
-                          ) : null}
-                          {active ? (
-                            <Badge variant="secondary" className="ml-auto text-[10px] py-0 h-4">
-                              {t("settings.planActive")}
-                            </Badge>
-                          ) : null}
-                        </span>
-                        <span className="settings-choice__hint">
-                          {t("settings.planQuota", {
-                            h5: fmtTok(plan.tokens5h),
-                            week: fmtTok(plan.tokensWeek),
-                          })}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card size="sm" className="settings-card">
-            <CardHeader className="gap-1">
-              <div className="settings-card__icon">
-                <IconPalette className="size-4" stroke={1.75} />
-              </div>
-              <CardTitle>{t("settings.appearance")}</CardTitle>
-              <CardDescription>{t("settings.appearanceHint")}</CardDescription>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-4">
-              <div className="flex flex-col gap-2">
-                <Label>{t("settings.theme")}</Label>
-                <ChoiceGroup
-                  value={settings.theme}
-                  onChange={(v) => void update({ theme: v as ThemeId })}
-                  options={[
-                    { value: "light", label: t("settings.themeLight") },
-                    { value: "dark", label: t("settings.themeDark") },
-                    { value: "midnight", label: t("settings.themeMidnight") },
-                  ]}
-                />
-              </div>
-              <Separator />
-              <div className="flex flex-col gap-2">
-                <Label className="flex items-center gap-1.5">
-                  <IconLanguage className="size-3.5 text-muted-foreground" />
-                  {t("settings.language")}
-                </Label>
-                <ChoiceGroup
-                  value={settings.language}
-                  onChange={(v) => void update({ language: v as LanguageId })}
-                  options={[
-                    { value: "ru", label: t("settings.languageRu") },
-                    { value: "en", label: t("settings.languageEn") },
-                  ]}
-                />
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card size="sm" className="settings-card">
-            <CardHeader className="gap-1">
-              <div className="settings-card__icon">
-                <IconRobot className="size-4" stroke={1.75} />
-              </div>
-              <CardTitle>{t("settings.agent")}</CardTitle>
-              <CardDescription>{t("settings.agentCardHint")}</CardDescription>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-4">
-              <div className="flex flex-col gap-2">
-                <Label>{t("settings.permissionMode")}</Label>
-                <ChoiceGroup
-                  value={settings.permissionMode}
-                  onChange={(v) =>
-                    void update({ permissionMode: v as PermissionMode })
-                  }
-                  options={[
-                    {
-                      value: "ask",
-                      label: t("settings.permissionAsk"),
-                      hint: t("settings.permissionAskHint"),
-                    },
-                    {
-                      value: "auto",
-                      label: t("settings.permissionAuto"),
-                      hint: t("settings.permissionAutoHint"),
-                    },
-                  ]}
-                />
-              </div>
-              <Separator />
-              <div className="flex flex-col gap-2">
-                <Label>{t("settings.defaultMode")}</Label>
-                <ChoiceGroup
-                  value={settings.defaultAgentMode}
-                  onChange={(v) =>
-                    void update({ defaultAgentMode: v as AgentMode })
-                  }
-                  options={[
-                    { value: "agent", label: t("chat.modeAgent") },
-                    { value: "plan", label: t("chat.modePlan") },
-                  ]}
-                />
-              </div>
-              <Separator />
-              <div className="flex flex-col gap-2">
-                <Label htmlFor="model-label">{t("settings.modelLabel")}</Label>
-                <p className="text-xs text-muted-foreground">
-                  {t("settings.model")}:{" "}
-                  <span className="font-mono text-foreground">
-                    {modelFromAgent || settings.modelLabel || "—"}
+                    {Math.round(quota.pct)}%
                   </span>
-                </p>
-                <Input
-                  id="model-label"
-                  value={settings.modelLabel}
-                  placeholder={t("settings.modelPlaceholder")}
-                  onChange={(e) => void update({ modelLabel: e.target.value })}
-                />
-              </div>
-            </CardContent>
-          </Card>
+                ) : null}
+              </button>
+            ))}
+          </nav>
 
-          {/* Accounts the agent can actually use. beide holds no tokens of its
-              own — an Anthropic subscription login lives in pi's auth.json and
-              is only reported here. */}
-          <Card size="sm" className="settings-card">
-            <CardHeader className="gap-1">
-              <div className="settings-card__icon">
-                <IconPlugConnected className="size-4" stroke={1.75} />
-              </div>
-              <CardTitle>{t("settings.providers")}</CardTitle>
-              <CardDescription>{t("settings.providersHint")}</CardDescription>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-3">
-              {providers.length === 0 ? (
-                <p className="text-xs text-muted-foreground">
-                  {t("settings.providersLoading")}
-                </p>
-              ) : (
-                providers.map((p) => (
-                  <div
-                    key={p.id}
-                    className="flex items-center justify-between gap-3"
-                  >
-                    <div className="min-w-0">
-                      <div className="truncate text-sm font-medium">
-                        {p.label}
-                      </div>
-                      <p className="text-xs text-muted-foreground">
-                        {!p.connected
-                          ? t("settings.providerNotConnected")
-                          : p.kind === "oauth"
-                            ? t("settings.providerOauth")
-                            : t("settings.providerApiKey")}
-                      </p>
-                    </div>
-                    <Badge
-                      variant={p.connected ? "default" : "outline"}
-                      className="h-6 shrink-0 px-2 font-normal"
-                    >
-                      {p.connected
-                        ? t("settings.providerReady")
-                        : t("settings.providerNone")}
-                    </Badge>
-                  </div>
-                ))
-              )}
-              <Separator />
-              <p className="text-xs leading-snug text-muted-foreground">
-                {t("settings.providersFootnote")}
-              </p>
-            </CardContent>
-          </Card>
-
-          <Card size="sm" className="settings-card">
-            <CardHeader className="gap-1">
-              <div className="settings-card__icon">
-                <IconShield className="size-4" stroke={1.75} />
-              </div>
-              <CardTitle>{t("settings.privacy")}</CardTitle>
-              <CardDescription>{t("settings.privacyHint")}</CardDescription>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-4">
-              <div className="flex items-center justify-between gap-4">
-                <div className="min-w-0">
-                  <div className="text-sm font-medium">
-                    {t("settings.telemetry")}
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    {t("settings.telemetryHint")}
-                  </p>
-                </div>
-                <Switch
-                  checked={settings.telemetryEnabled}
-                  onCheckedChange={(checked) =>
-                    void update({ telemetryEnabled: checked })
-                  }
-                />
-              </div>
-              <Separator />
-              <div className="flex items-center justify-between gap-4">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-1.5 text-sm font-medium">
-                    <IconSparkles className="size-3.5 text-muted-foreground" />
-                    {t("settings.replayOnboarding")}
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    {t("settings.replayOnboardingHint")}
-                  </p>
-                </div>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => resetOnboarding()}
-                >
-                  {t("settings.replayOnboardingAction")}
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card size="sm" className="settings-card settings-card--wide">
-            <CardHeader className="gap-1">
-              <div className="settings-card__icon">
-                <IconHistory className="size-4" stroke={1.75} />
-              </div>
-              <CardTitle>{t("settings.checkpoints")}</CardTitle>
-              <CardDescription>{t("settings.checkpointsHint")}</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {checkpoints.length === 0 ? (
-                <div className="settings-empty">{t("settings.noCheckpoints")}</div>
-              ) : (
-                <div className="checkpoint-list">
-                  {checkpoints.map((cp) => (
-                    <div key={cp.id} className="checkpoint-item">
-                      <div className="checkpoint-item__meta">
-                        <strong>{cp.label || cp.id}</strong>
-                        <span>
-                          {new Date(cp.createdAt).toLocaleString()} ·{" "}
-                          {t("settings.filesCount", { count: cp.files.length })}
-                        </span>
-                      </div>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        onClick={() => void restoreCheckpoint(cp.id)}
-                      >
-                        {t("settings.restore")}
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
+          <div className="settings-content">{current.render()}</div>
         </div>
       </div>
     </div>

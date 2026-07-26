@@ -1132,60 +1132,7 @@ pre,
   font-size: 12px;
 }
 
-/* Settings */
-.settings-view {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-  padding: 28px 32px 48px;
-  background: var(--bg);
-}
-
-.settings-view__inner {
-  max-width: 640px;
-}
-
-.settings-view h1 {
-  margin: 0 0 20px;
-  font-size: 20px;
-  font-weight: 600;
-  letter-spacing: -0.02em;
-}
-
-.checkpoint-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.checkpoint-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 8px 10px;
-  border-radius: 8px;
-  border: 1px solid var(--border-subtle);
-  background: var(--bg);
-}
-
-.checkpoint-item__meta {
-  min-width: 0;
-}
-
-.checkpoint-item__meta strong {
-  display: block;
-  font-size: 12.5px;
-}
-
-.checkpoint-item__meta span {
-  font-size: 11px;
-  color: var(--text-muted);
-  font-family:
-    "Cascadia Code",
-    Consolas,
-    monospace;
-}
+/* Settings live entirely in shell.css — see the "Settings" block there. */
 
 /* Utility */
 .sr-only {

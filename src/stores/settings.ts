@@ -3,7 +3,7 @@ import type { BeideSettings, CheckpointInfo, ThemeId } from "../lib/types";
 import { getBeide } from "../lib/ipc";
 import { setAppLanguage } from "../i18n";
 
-const DEFAULTS: BeideSettings = {
+export const SETTINGS_DEFAULTS: BeideSettings = {
   language: "ru",
   theme: "dark",
   permissionMode: "ask",
@@ -28,21 +28,23 @@ interface SettingsState {
   update: (partial: Partial<BeideSettings>) => Promise<void>;
   refreshCheckpoints: () => Promise<void>;
   restoreCheckpoint: (id: string) => Promise<void>;
+  /** Back to `SETTINGS_DEFAULTS`, persisted through the same IPC as `update`. */
+  reset: () => Promise<void>;
 }
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
-  settings: { ...DEFAULTS },
+  settings: { ...SETTINGS_DEFAULTS },
   loaded: false,
   checkpoints: [],
 
   load: async () => {
     const api = getBeide();
-    let next = { ...DEFAULTS };
+    let next = { ...SETTINGS_DEFAULTS };
     if (api) {
       try {
-        next = { ...DEFAULTS, ...(await api.settings.get()) };
+        next = { ...SETTINGS_DEFAULTS, ...(await api.settings.get()) };
       } catch {
-        next = { ...DEFAULTS };
+        next = { ...SETTINGS_DEFAULTS };
       }
     }
     applyTheme(next.theme);
@@ -91,5 +93,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     if (!api) return;
     await api.checkpoint.restore(id);
     await get().refreshCheckpoints();
+  },
+
+  // Goes through `update` so theme/language side effects and the optimistic
+  // rollback on IPC failure stay in one place.
+  reset: async () => {
+    await get().update({ ...SETTINGS_DEFAULTS });
   },
 }));

@@ -2,7 +2,12 @@ import { app } from "electron";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { UsageStateData } from "../../src/lib/usage";
-import { PLANS, TOOL_TOKEN_COST, normalizeUsage } from "../../src/lib/usage";
+import {
+  TOOL_TOKEN_COST,
+  applySpend,
+  cloneUsage,
+  normalizeUsage,
+} from "../../src/lib/usage";
 
 export class UsageService {
   private cache: UsageStateData | null = null;
@@ -29,7 +34,7 @@ export class UsageService {
       }
       this.cache = normalizeUsage(raw);
       await this.persist();
-      return clone(this.cache);
+      return cloneUsage(this.cache);
     }
 
     const rolled = normalizeUsage(this.cache);
@@ -37,7 +42,7 @@ export class UsageService {
       rolled.h5.key !== this.cache.h5.key || rolled.week.key !== this.cache.week.key;
     this.cache = rolled;
     if (rolledOver) await this.persist();
-    return clone(this.cache);
+    return cloneUsage(this.cache);
   }
 
   /**
@@ -61,42 +66,12 @@ export class UsageService {
     }
     if (cost <= 0) return cur;
 
-    const limits = PLANS[cur.plan];
-    let h5 = cur.h5.used;
-    let week = cur.week.used;
-    let credits = cur.credits;
-
-    let remaining = cost;
-    // Spend from plan windows first (shared min headroom)
-    const planRoom = Math.max(
-      0,
-      Math.min(limits.tokens5h - h5, limits.tokensWeek - week),
-    );
-    const fromPlan = Math.min(planRoom, remaining);
-    h5 += fromPlan;
-    week += fromPlan;
-    remaining -= fromPlan;
-
-    if (remaining > 0) {
-      const fromCredits = Math.min(credits, remaining);
-      credits -= fromCredits;
-      remaining -= fromCredits;
-    }
-
-    // If still over (should be blocked client-side), record overshoot on windows
-    if (remaining > 0) {
-      h5 += remaining;
-      week += remaining;
-    }
-
-    this.cache = {
-      plan: cur.plan,
-      h5: { ...cur.h5, used: h5 },
-      week: { ...cur.week, used: week },
-      credits,
-    };
+    // Shared allocation rule — see `applySpend` in src/lib/usage.ts. It keeps
+    // `limits`/`demo` on the snapshot; losing them would silently fall back to
+    // the local `PLANS` mirror and show the wrong quota after a cloud sync.
+    this.cache = applySpend(cur, cost).data;
     await this.persist();
-    return clone(this.cache);
+    return cloneUsage(this.cache);
   }
 
   private async persist(): Promise<void> {
@@ -107,13 +82,4 @@ export class UsageService {
     await writeFile(tmp, JSON.stringify(this.cache, null, 2), "utf-8");
     await rename(tmp, this.filePath);
   }
-}
-
-function clone(d: UsageStateData): UsageStateData {
-  return {
-    plan: d.plan,
-    h5: { ...d.h5 },
-    week: { ...d.week },
-    credits: d.credits,
-  };
 }

@@ -5,6 +5,14 @@ import { tmpdir } from "node:os";
 import { GitIgnoreMatcher } from "./paths";
 import { CheckpointService } from "./checkpoints";
 import { IpcError } from "./ipc-utils";
+import type { UsageStateData } from "../../src/lib/usage";
+import {
+  PLANS,
+  applySpend,
+  canSpend,
+  cloneUsage,
+  effectiveLimits,
+} from "../../src/lib/usage";
 
 async function runTests() {
   console.log("=== BACKEND EMPIRICAL VERIFICATION HARNESS ===");
@@ -250,6 +258,96 @@ async function runTests() {
     passed++;
   } catch (err) {
     console.error("  FAIL: 30ms token streaming batching:", err);
+    failed++;
+  }
+
+  // 6. Token quota allocation — one rule for both processes
+  try {
+    console.log("\n[TEST 6] Token quota allocation and gating...");
+
+    const base: UsageStateData = {
+      plan: "free",
+      h5: { key: "h5_1", endsAt: Date.now() + 3_600_000, used: 0 },
+      week: { key: "wk_1", endsAt: Date.now() + 86_400_000, used: 0 },
+      credits: 0,
+    };
+
+    // Server limits win over the local PLANS mirror — the UI used to read
+    // PLANS directly and showed the wrong quota for cloud accounts.
+    const withServerLimits: UsageStateData = {
+      ...base,
+      limits: { label: "Team", tokens5h: 1000, tokensWeek: 5000 },
+    };
+    assert.strictEqual(
+      effectiveLimits(withServerLimits).tokens5h,
+      1000,
+      "server limits beat the PLANS mirror",
+    );
+    assert.strictEqual(
+      effectiveLimits(base).tokens5h,
+      PLANS.free.tokens5h,
+      "PLANS mirror used when the server said nothing",
+    );
+
+    // Plan window first, bonus credits only for the remainder.
+    const mixed = applySpend({ ...withServerLimits, credits: 500 }, 1200);
+    assert.strictEqual(mixed.fromPlan, 1000, "plan window drained first");
+    assert.strictEqual(mixed.fromCredits, 200, "remainder taken from credits");
+    assert.strictEqual(mixed.overshoot, 0, "nothing overshot");
+    assert.strictEqual(mixed.data.credits, 300, "credits debited");
+    assert.strictEqual(mixed.data.h5.used, 1000, "h5 charged the plan part");
+    assert.strictEqual(mixed.data.week.used, 1000, "week charged the plan part");
+
+    // Past every pool the overshoot still lands on the windows — dropping it
+    // would let a client-side bypass spend for free.
+    const over = applySpend(withServerLimits, 1500);
+    assert.strictEqual(over.overshoot, 500, "overshoot reported");
+    assert.strictEqual(over.data.h5.used, 1500, "overshoot recorded on h5");
+    assert.strictEqual(over.data.week.used, 1500, "overshoot recorded on week");
+
+    // `limits` / `demo` survive a spend — losing them silently falls back to PLANS.
+    const carried = applySpend({ ...withServerLimits, demo: true }, 10);
+    assert.strictEqual(carried.data.limits?.tokens5h, 1000, "limits carried through");
+    assert.strictEqual(carried.data.demo, true, "demo flag carried through");
+    assert.strictEqual(
+      cloneUsage({ ...withServerLimits, demo: true }).limits?.label,
+      "Team",
+      "cloneUsage keeps limits",
+    );
+
+    // The gate names the window that blocked, in codes rather than prose.
+    assert.strictEqual(canSpend(withServerLimits, 100).ok, true, "spend allowed");
+    const h5Blocked = canSpend(
+      { ...withServerLimits, h5: { ...withServerLimits.h5, used: 1000 } },
+      100,
+    );
+    assert.strictEqual(h5Blocked.ok, false, "5h exhaustion blocks");
+    assert.strictEqual(h5Blocked.code, "h5_exhausted", "5h denial code");
+    const weekBlocked = canSpend(
+      { ...withServerLimits, week: { ...withServerLimits.week, used: 5000 } },
+      100,
+    );
+    assert.strictEqual(weekBlocked.ok, false, "weekly exhaustion blocks");
+    assert.strictEqual(weekBlocked.code, "week_exhausted", "weekly denial code");
+
+    // Credits can carry a spend the plan window alone cannot.
+    assert.strictEqual(
+      canSpend(
+        {
+          ...withServerLimits,
+          h5: { ...withServerLimits.h5, used: 1000 },
+          credits: 500,
+        },
+        100,
+      ).ok,
+      true,
+      "credits cover a drained plan window",
+    );
+
+    console.log("  PASS: quota allocation, carry-through and gating verified.");
+    passed++;
+  } catch (err) {
+    console.error("  FAIL: token quota allocation:", err);
     failed++;
   }
 

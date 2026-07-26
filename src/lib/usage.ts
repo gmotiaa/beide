@@ -1,6 +1,10 @@
 /**
  * Account usage — dual windows (5h + week), token-based.
  * Counting "prompts" is unfair: one huge message can cost more than ten short ones.
+ *
+ * This module is pure and shared by both processes (renderer stores and the
+ * main-process `UsageService`). It therefore returns *codes*, never localized
+ * text — the renderer maps codes to i18n strings.
  */
 
 export type UsagePlanId = "free" | "pro";
@@ -22,7 +26,11 @@ export interface PlanLimits {
   credits: number;
 }
 
-/** Compact token quotas */
+/**
+ * Local mirror of `public.plan_limits`. Kept in sync with
+ * `supabase/migrations/20260101000000_baseline_schema.sql` — the DB row is the
+ * authority, this only covers signed-out / offline use.
+ */
 export const PLANS: Record<UsagePlanId, PlanLimits> = {
   free: {
     id: "free",
@@ -84,7 +92,11 @@ export function effectiveLimits(data: UsageStateData): UsageLimits {
   ) {
     return l;
   }
-  return { label: local.label, tokens5h: local.tokens5h, tokensWeek: local.tokensWeek };
+  return {
+    label: local.label,
+    tokens5h: local.tokens5h,
+    tokensWeek: local.tokensWeek,
+  };
 }
 
 function bucketIndex(ms: number, ts = Date.now()): number {
@@ -178,6 +190,19 @@ export function normalizeUsage(
   return out;
 }
 
+/** Deep copy that keeps `limits` / `demo` — dropping them silently un-syncs the quota. */
+export function cloneUsage(d: UsageStateData): UsageStateData {
+  const out: UsageStateData = {
+    plan: d.plan,
+    h5: { ...d.h5 },
+    week: { ...d.week },
+    credits: d.credits,
+  };
+  if (d.limits) out.limits = { ...d.limits };
+  if (typeof d.demo === "boolean") out.demo = d.demo;
+  return out;
+}
+
 export function remainingPct(used: number, limit: number): number {
   if (limit <= 0) return 0;
   const left = Math.max(0, limit - used);
@@ -202,12 +227,13 @@ export function msUntil(endsAt: number, from = Date.now()): number {
   return Math.max(0, endsAt - from);
 }
 
-export function formatResetIn(ms: number): string {
-  if (ms <= 0) return "скоро";
-  const h = Math.floor(ms / 3_600_000);
-  const m = Math.floor((ms % 3_600_000) / 60_000);
-  if (h <= 0) return `${m} мин`;
-  return `${h} ч ${m} мин`;
+/** Split a countdown into whole hours + minutes so the UI can localize it. */
+export function durationParts(ms: number): { hours: number; minutes: number } {
+  const clamped = Math.max(0, ms);
+  return {
+    hours: Math.floor(clamped / 3_600_000),
+    minutes: Math.floor((clamped % 3_600_000) / 60_000),
+  };
 }
 
 export function formatResetAt(endsAt: number, locale = "ru-RU"): string {
@@ -219,14 +245,22 @@ export function formatResetAt(endsAt: number, locale = "ru-RU"): string {
       minute: "2-digit",
     });
   } catch {
-    return formatResetIn(msUntil(endsAt));
+    const { hours, minutes } = durationParts(msUntil(endsAt));
+    return `${hours}:${String(minutes).padStart(2, "0")}`;
   }
 }
 
-export function canSpend(
-  data: UsageStateData,
-  costTokens: number,
-): { ok: boolean; reason?: string } {
+/** Which window blocked the spend. Renderer maps this to an i18n string. */
+export type UsageDenialCode = "h5_exhausted" | "week_exhausted";
+
+export interface SpendGate {
+  ok: boolean;
+  code?: UsageDenialCode;
+  /** Reset moment of the window that blocked, for the "resets at …" hint. */
+  endsAt?: number;
+}
+
+export function canSpend(data: UsageStateData, costTokens: number): SpendGate {
   const cost = Math.max(1, Math.floor(costTokens));
   const limits = effectiveLimits(data);
   const h5left = limits.tokens5h - data.h5.used;
@@ -234,25 +268,57 @@ export function canSpend(
   const pool = Math.min(h5left, weekLeft) + data.credits;
   if (pool >= cost) return { ok: true };
   if (h5left + data.credits < cost) {
-    return {
-      ok: false,
-      reason: `Лимит токенов на 5 часов исчерпан. Сброс ${formatResetAt(data.h5.endsAt)}.`,
-    };
+    return { ok: false, code: "h5_exhausted", endsAt: data.h5.endsAt };
   }
+  return { ok: false, code: "week_exhausted", endsAt: data.week.endsAt };
+}
+
+export interface SpendOutcome {
+  data: UsageStateData;
+  /** Tokens taken from the plan windows */
+  fromPlan: number;
+  /** Tokens taken from the bonus pool */
+  fromCredits: number;
+  /** Tokens spent past every pool — recorded on the windows, never dropped */
+  overshoot: number;
+}
+
+/**
+ * The single allocation rule, shared by the renderer store and `UsageService`:
+ * plan windows first (shared headroom), then bonus credits, and any remainder
+ * still lands on the windows. Both processes used to implement this separately
+ * and disagreed about the remainder — one dropped it, which under-counted.
+ */
+export function applySpend(data: UsageStateData, costTokens: number): SpendOutcome {
+  const cost = Math.max(0, Math.floor(costTokens));
+  const base = cloneUsage(data);
+  if (cost <= 0) return { data: base, fromPlan: 0, fromCredits: 0, overshoot: 0 };
+
+  const limits = effectiveLimits(base);
+  const planRoom = Math.max(
+    0,
+    Math.min(limits.tokens5h - base.h5.used, limits.tokensWeek - base.week.used),
+  );
+
+  let remaining = cost;
+  const fromPlan = Math.min(planRoom, remaining);
+  remaining -= fromPlan;
+
+  const fromCredits = Math.min(base.credits, remaining);
+  remaining -= fromCredits;
+
+  const overshoot = remaining;
+  const charged = fromPlan + overshoot;
+
   return {
-    ok: false,
-    reason: `Недельный лимит токенов исчерпан. Сброс ${formatResetAt(data.week.endsAt)}.`,
+    data: {
+      ...base,
+      h5: { ...base.h5, used: base.h5.used + charged },
+      week: { ...base.week, used: base.week.used + charged },
+      credits: base.credits - fromCredits,
+    },
+    fromPlan,
+    fromCredits,
+    overshoot,
   };
 }
-
-/** @deprecated use canSpend */
-export function canSendPrompt(data: UsageStateData, text = ""): {
-  ok: boolean;
-  reason?: string;
-} {
-  return canSpend(data, estimateTokens(text));
-}
-
-export const USAGE_WINDOW_MS = WINDOW_5H_MS;
-export const pct = (used: number, limit: number) =>
-  limit <= 0 ? 100 : Math.min(100, Math.round((used / limit) * 1000) / 10);
