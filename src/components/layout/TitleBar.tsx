@@ -10,6 +10,7 @@ import {
   IconSquaresDiagonal,
   IconX,
 } from "@tabler/icons-react";
+import { appIconUrl } from "../../lib/assets";
 import { Avatar, AvatarFallback } from "../ui/avatar";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -121,7 +122,7 @@ export function TitleBar() {
         <div className="title-bar__left">
           <div className="title-bar__brand">
             <img
-              src="/icon.svg"
+              src={appIconUrl}
               alt=""
               className="title-bar__icon"
               width={20}

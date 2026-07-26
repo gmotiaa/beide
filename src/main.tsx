@@ -4,6 +4,7 @@ import App from "./App";
 import "./styles/global.css";
 import "./styles/shell.css";
 import "./styles/onboarding.css";
+import "./styles/intro.css";
 import "./i18n";
 import "./monaco-setup";
 

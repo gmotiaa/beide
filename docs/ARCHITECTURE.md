@@ -28,7 +28,7 @@ processes, one bridge, no exceptions.
 | `electron/ipc.ts` | service construction + every `ipcMain.handle` registration |
 | `electron/preload.ts` | `contextBridge.exposeInMainWorld("beide", api)` |
 | `src/main.tsx` | React root, global CSS, i18n, monaco setup |
-| `src/App.tsx` | onboarding gate → `AppLayout` |
+| `src/App.tsx` | first-run intro gate → onboarding gate → `AppLayout` |
 
 `electron.vite.config.ts` builds main as **ESM** (pi is ESM-only) and preload as
 **CJS** (required for `contextBridge`). Renderer alias: `@` → `src`.
@@ -43,7 +43,7 @@ processes, one bridge, no exceptions.
 | `checkpoints.ts` | pre-mutation snapshots + restore | `<workspace>/.beide/checkpoints/` |
 | `sessions.ts` | chat transcripts, active session id | `<workspace>/.beide/sessions/*.json` |
 | `settings.ts` | user settings + file watch | `%APPDATA%/beide/settings.json` |
-| `usage.ts` | prompt/tool/token counters, plan limits | `%APPDATA%/beide/usage.json` |
+| `usage.ts` | token counters for the 5h/week windows; the allocation rule itself is `applySpend` in `src/lib/usage.ts`, shared with the renderer | `%APPDATA%/beide/usage.json` |
 | `paths.ts` | path safety (`resolveInWorkspace`), gitignore matcher, `.beide` layout |  — |
 | `ipc-utils.ts` | argument validation, `IpcError`, `{success,data,error}` envelope | — |
 | `supabase-admin.ts` | service-role helpers (**not wired to any IPC handler**) | — |
@@ -62,8 +62,8 @@ reload of main does not throw "second handler for channel".
 | `agent.ts` | agent status/mode/model, `agent:event` → chat store translation, permission requests |
 | `settings.ts` | mirrors `BeideSettings`, applies theme + language |
 | `auth.ts` | Supabase session (optional; app works fully signed-out) |
-| `usage.ts` | usage counters shown in the status bar |
-| `onboarding.ts` | first-run flag in `localStorage` |
+| `usage.ts` | usage counters; Supabase snapshot when signed in, local file otherwise. `src/lib/usage.ts` stays language-free — the store maps denial codes to i18n strings |
+| `onboarding.ts` | first-run flags in `localStorage` (`completed`, `introSeen`) |
 
 Data flows one way: IPC event → `useAgentStore.handleEvent` → mutations on
 `useChatStore` → React re-render. Components never call IPC for transcript
@@ -80,7 +80,14 @@ state.
   registry: message list, input bar, tool cards. See [UI.md](UI.md).
 * `ui/` — shadcn primitives. Only components actually imported live here.
 * `diff/DiffModal.tsx` — permission prompt with a diff view.
-* `settings/SettingsView.tsx`, `onboarding/Onboarding.tsx`.
+* `settings/` — `SettingsView.tsx` is only the shell (hero + section nav);
+  each section lives in `sections.tsx`, the quota screen in `UsageSection.tsx`,
+  the shared row/field/choice primitives in `parts.tsx`, and the pure helpers in
+  `helpers.ts` (kept out of the `.tsx` files so Fast Refresh keeps working).
+* `onboarding/Onboarding.tsx`,
+  `onboarding/FirstRunIntro.tsx` (splash + WebAudio chime on the very first
+  launch; sounds are synthesised in `src/lib/sound.ts` because the CSP has no
+  `media-src`).
 
 ## Storage summary
 

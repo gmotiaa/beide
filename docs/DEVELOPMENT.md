@@ -9,6 +9,8 @@
 | `npm run preview` | runs the built app |
 | `npm run typecheck` | `tsc --noEmit` for both the node and web projects |
 | `npm test` | backend invariant harness (see below) |
+| `npm run package:win` | build + Windows installer and portable `.exe` in `release/` |
+| `npm run package:dir` | build + unpacked app in `release/win-unpacked/` (fast smoke test) |
 | `npm run supabase:setup` | creates/updates the admin auth user (needs `BEIDE_ADMIN_EMAIL` + `BEIDE_ADMIN_PASSWORD`) |
 | `npm run supabase:verify` | read-only check that the anon key reaches nothing but `plan_limits` |
 
@@ -56,6 +58,36 @@ Gotchas that cost time before:
   streaming triggers a full page reload; the transcript is restored from the
   active session (see [CHAT-AND-SESSIONS.md](CHAT-AND-SESSIONS.md)) but any
   unsaved tail is only as fresh as the last 600 ms flush.
+
+## Packaging for Windows
+
+`npm run package:win` runs the normal build and then electron-builder, which is
+configured in [electron-builder.yml](../electron-builder.yml). Two artefacts land
+in `release/` (git-ignored):
+
+| File | What it is |
+| --- | --- |
+| `beide-<version>-setup.exe` | NSIS installer, per-user, install path selectable, creates shortcuts |
+| `beide-<version>-portable.exe` | single file, unpacks to a temp dir and runs — no install |
+
+Things the config encodes, so don't undo them casually:
+
+* **`asarUnpack: node_modules/@earendil-works/**`** — pi resolves paths inside
+  its own package and spawns helpers; inside the asar archive those paths do not
+  exist on disk.
+* **Four renderer-only packages are excluded** (`monaco-editor`,
+  `@monaco-editor`, `@tabler`, `lucide-react`) — Vite already bundles them into
+  `out/renderer`, so their sources cost ~245 MB for nothing. Do *not* turn this
+  into `"!node_modules/**"` plus a whitelist: pi's dependency tree is partly
+  hoisted into the root `node_modules`, and stripping it produces a build that
+  starts a process but never opens a window. Verified the hard way.
+* **`build/icon.ico`** is the Windows icon. `build/icon.png` is actually a JPEG
+  despite the name, so electron-builder cannot derive an icon from it; the `.ico`
+  is generated from that artwork at 256/128/64/48/32/16.
+
+Builds are unsigned — Windows SmartScreen shows "unknown publisher" on first
+launch. Signing needs a real certificate (`win.certificateFile` + password from
+the environment, never committed).
 
 ## Driving the running app (CDP)
 
