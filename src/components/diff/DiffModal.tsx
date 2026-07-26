@@ -96,7 +96,7 @@ export function DiffModal() {
             </DialogDescription>
           ) : (
             <DialogDescription className="sr-only">
-              Подтверждение действия агента
+              {t("diff.title")}
             </DialogDescription>
           )}
         </DialogHeader>

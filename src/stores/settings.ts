@@ -5,11 +5,11 @@ import { setAppLanguage } from "../i18n";
 
 const DEFAULTS: BeideSettings = {
   language: "ru",
-  theme: "light",
+  theme: "dark",
   permissionMode: "ask",
   telemetryEnabled: false,
   defaultAgentMode: "agent",
-  modelLabel: "grok-4.5",
+  modelLabel: "minimaxai/minimax-m3",
 };
 
 function applyTheme(theme: ThemeId): void {

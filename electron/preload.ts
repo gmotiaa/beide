@@ -12,63 +12,74 @@ const ALLOWED_EVENTS = new Set([
   "workspace:changed",
 ]);
 
+async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
+  const res = (await ipcRenderer.invoke(channel, ...args)) as
+    | { success: true; data: T }
+    | { success: false; error: { message: string; code: string } }
+    | T;
+
+  if (res && typeof res === "object" && "success" in res) {
+    if (res.success) {
+      return res.data;
+    }
+    const err = res.error;
+    throw new Error(err?.message || `IPC invocation failed on channel "${channel}"`);
+  }
+  return res as T;
+}
+
 const api: BeideApi = {
   workspace: {
-    open: () => ipcRenderer.invoke("workspace:open"),
-    getRoot: () => ipcRenderer.invoke("workspace:getRoot"),
-    readDir: (path?: string) => ipcRenderer.invoke("workspace:readDir", path),
-    readFile: (path: string) => ipcRenderer.invoke("workspace:readFile", path),
-    writeFile: (path: string, content: string) =>
-      ipcRenderer.invoke("workspace:writeFile", path, content),
-    searchFiles: (query: string) => ipcRenderer.invoke("workspace:search", query),
-    pathExists: (path: string) => ipcRenderer.invoke("workspace:pathExists", path),
-    deletePath: (path: string) => ipcRenderer.invoke("workspace:delete", path),
-    renamePath: (path: string, newName: string) =>
-      ipcRenderer.invoke("workspace:rename", path, newName),
-    revealInFolder: (path: string) => ipcRenderer.invoke("workspace:reveal", path),
+    open: () => invoke("workspace:open"),
+    getRoot: () => invoke("workspace:getRoot"),
+    readDir: (path?: string) => invoke("workspace:readDir", path),
+    readFile: (path: string) => invoke("workspace:readFile", path),
+    writeFile: (path: string, content: string) => invoke("workspace:writeFile", path, content),
+    searchFiles: (query: string) => invoke("workspace:search", query),
+    pathExists: (path: string) => invoke("workspace:pathExists", path),
+    deletePath: (path: string) => invoke("workspace:delete", path),
+    renamePath: (path: string, newName: string) => invoke("workspace:rename", path, newName),
+    revealInFolder: (path: string) => invoke("workspace:reveal", path),
   },
   agent: {
-    prompt: (payload: AgentPromptPayload) => ipcRenderer.invoke("agent:prompt", payload),
-    abort: () => ipcRenderer.invoke("agent:abort"),
-    setMode: (mode: AgentMode) => ipcRenderer.invoke("agent:setMode", mode),
+    prompt: (payload: AgentPromptPayload) => invoke("agent:prompt", payload),
+    abort: () => invoke("agent:abort"),
+    setMode: (mode: AgentMode) => invoke("agent:setMode", mode),
+    setModel: (model: string) => invoke("agent:setModel", model),
     respondPermission: (id: string, allow: boolean, content?: string) =>
-      ipcRenderer.invoke("agent:respondPermission", id, allow, content),
-    getStatus: () => ipcRenderer.invoke("agent:getStatus"),
+      invoke("agent:respondPermission", id, allow, content),
+    getStatus: () => invoke("agent:getStatus"),
+    getProviders: () => invoke("agent:getProviders"),
   },
   checkpoint: {
-    list: () => ipcRenderer.invoke("checkpoint:list"),
-    restore: (id: string) => ipcRenderer.invoke("checkpoint:restore", id),
+    list: () => invoke("checkpoint:list"),
+    restore: (id: string) => invoke("checkpoint:restore", id),
   },
   settings: {
-    get: () => ipcRenderer.invoke("settings:get"),
-    set: (partial: Partial<BeideSettings>) => ipcRenderer.invoke("settings:set", partial),
+    get: () => invoke("settings:get"),
+    set: (partial: Partial<BeideSettings>) => invoke("settings:set", partial),
   },
   session: {
-    list: () => ipcRenderer.invoke("session:list"),
-    load: (id: string) => ipcRenderer.invoke("session:load", id),
-    new: () => ipcRenderer.invoke("session:new"),
-    save: (id: string, messages: unknown) =>
-      ipcRenderer.invoke("session:save", id, messages),
-    delete: (id: string) => ipcRenderer.invoke("session:delete", id),
+    list: () => invoke("session:list"),
+    active: () => invoke("session:active"),
+    load: (id: string) => invoke("session:load", id),
+    new: () => invoke("session:new"),
+    save: (id: string, messages: unknown) => invoke("session:save", id, messages),
+    delete: (id: string) => invoke("session:delete", id),
   },
   shell: {
-    run: (command: string) => ipcRenderer.invoke("shell:run", command),
+    run: (command: string) => invoke("shell:run", command),
   },
   window: {
-    minimize: () => ipcRenderer.invoke("window:minimize"),
-    maximize: () => ipcRenderer.invoke("window:maximize") as Promise<boolean>,
-    close: () => ipcRenderer.invoke("window:close"),
-    isMaximized: () =>
-      ipcRenderer.invoke("window:isMaximized") as Promise<boolean>,
+    minimize: () => invoke("window:minimize"),
+    maximize: () => invoke("window:maximize"),
+    close: () => invoke("window:close"),
+    isMaximized: () => invoke("window:isMaximized"),
   },
   usage: {
-    get: () => ipcRenderer.invoke("usage:get"),
-    setPlan: (plan) => ipcRenderer.invoke("usage:setPlan", plan),
-    increment: (delta) => ipcRenderer.invoke("usage:increment", delta),
-    resetToday: () => ipcRenderer.invoke("usage:resetToday"),
+    get: () => invoke("usage:get"),
+    increment: (delta) => invoke("usage:increment", delta),
   },
-  authAdminSignUp: (email: string, password: string) =>
-    ipcRenderer.invoke("auth:adminSignUp", email, password),
   on: (channel: string, listener: (...args: unknown[]) => void) => {
     if (!ALLOWED_EVENTS.has(channel)) {
       console.warn(`[beide preload] blocked subscription to channel: ${channel}`);

@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type {
+  BeideApi,
   ChatImage,
   ChatMention,
   ChatMessage,
@@ -8,6 +9,82 @@ import type {
 import { getBeide, uid } from "../lib/ipc";
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
+let saveChain: Promise<void> = Promise.resolve();
+
+/** Mirrors LIMITS.sessionMessages in main — saving more throws and the whole save is lost. */
+const MAX_SAVED_MESSAGES = 2000;
+
+/**
+ * Bumped whenever the in-memory transcript is replaced. A save queued for the
+ * previous transcript must not land in the session that replaced it.
+ */
+let transcriptEpoch = 0;
+
+/** Shared in-flight lookup so parallel callers never make two files for one transcript. */
+let sessionCreation: Promise<string> | null = null;
+
+/**
+ * The id this transcript belongs to. Main already opened a session when it
+ * appended the first user message, so asking for it beats minting a second
+ * one — that is how a single conversation ended up split across two files,
+ * one holding just the prompt and the other the reply.
+ */
+function adoptOrCreateSession(api: BeideApi): Promise<string> {
+  if (!sessionCreation) {
+    sessionCreation = api.session
+      .active()
+      .catch(() => null)
+      .then((id) => id ?? api.session.new().then((s) => s.id));
+    void sessionCreation.catch(() => undefined).then(() => {
+      sessionCreation = null;
+    });
+  }
+  return sessionCreation;
+}
+
+/** Strip huge base64 images — an empty payload reloads as a broken <img>. */
+function compactForSave(messages: ChatMessage[]): ChatMessage[] {
+  const trimmed =
+    messages.length > MAX_SAVED_MESSAGES
+      ? messages.slice(-MAX_SAVED_MESSAGES)
+      : messages;
+  return trimmed.map((m) => {
+    if (!m.images?.length) return m;
+    const images = m.images.filter((img) => img.data.length <= 2000);
+    return { ...m, images: images.length ? images : undefined };
+  });
+}
+
+/**
+ * Save an exact transcript rather than "whatever the store holds when this
+ * runs". `persistSession(true)` reads the store on a later microtask, so a
+ * caller that clears the transcript right after asking for a flush used to
+ * save nothing at all and lose the conversation it meant to preserve.
+ */
+async function saveSnapshot(
+  api: BeideApi,
+  sessionId: string | null,
+  messages: ChatMessage[],
+): Promise<string | null> {
+  if (!messages.length) return sessionId;
+  const id = sessionId ?? (await adoptOrCreateSession(api));
+  await api.session.save(id, compactForSave(messages));
+  return id;
+}
+
+/**
+ * A transcript restored from disk describes a turn that was interrupted, not
+ * one still in flight: nothing is streaming and no tool is mid-run. Real
+ * events arriving afterwards address rows by id and revive them anyway.
+ */
+function settleRestored(messages: ChatMessage[]): ChatMessage[] {
+  return messages.map((m) => {
+    if (m.role === "assistant" && m.streaming) return { ...m, streaming: false };
+    if (m.role === "tool" && m.toolStatus === "running")
+      return { ...m, toolStatus: "done" as const };
+    return m;
+  });
+}
 
 interface ChatState {
   messages: ChatMessage[];
@@ -38,13 +115,13 @@ interface ChatState {
     args?: Record<string, unknown>;
     result?: unknown;
   }) => void;
-  pushSystem: (content: string) => void;
   setMessages: (messages: ChatMessage[]) => void;
   clear: () => void;
   newSession: () => Promise<void>;
+  restoreActiveSession: () => Promise<void>;
   loadSession: (id: string) => Promise<void>;
   refreshSessions: () => Promise<void>;
-  persistSession: (immediate?: boolean) => void;
+  persistSession: (immediate?: boolean) => Promise<void>;
   setError: (error: string | null) => void;
 }
 
@@ -158,7 +235,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         m.role === "assistant" && m.streaming ? { ...m, streaming: false } : m,
       ),
     }));
-    get().persistSession();
+    void get().persistSession();
   },
 
   appendThinkingDelta: (delta) => {
@@ -236,6 +313,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const messages = [...s.messages];
         const prev = messages[idx]!;
         const prevDetail = prev.toolDetail ?? prev.content;
+        // "готово"/"ok"/"done" are legacy placeholder details from old saved
+        // sessions — never a real subtitle, so they must not overwrite one.
         const nextDetail =
           detail && detail !== "готово" && detail !== "ok" && detail !== "done"
             ? detail
@@ -267,22 +346,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return { messages: [...s.messages, msg] };
     });
     if (status === "done" || status === "error") {
-      get().persistSession();
+      void get().persistSession();
     }
-  },
-
-  pushSystem: (content) => {
-    set((s) => ({
-      messages: [
-        ...s.messages,
-        {
-          id: uid("sys"),
-          role: "system",
-          content,
-          createdAt: Date.now(),
-        },
-      ],
-    }));
   },
 
   setMessages: (messages) => set({ messages }),
@@ -291,28 +356,92 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   newSession: async () => {
     const api = getBeide();
-    // Flush current transcript before switching
-    get().persistSession(true);
-    get().clear();
     if (!api) {
+      get().clear();
+      transcriptEpoch++;
       set({ sessionId: null });
       return;
     }
+    // A turn still streaming belongs to the outgoing transcript; its remaining
+    // events are dropped by the session filter, so letting it run would only
+    // burn tokens. Best-effort — switching must not depend on it.
     try {
-      const session = await api.session.new();
-      set({ sessionId: session.id });
-      await get().refreshSessions();
+      await api.agent.abort();
     } catch {
-      set({ sessionId: null });
+      /* ignore */
+    }
+    // Pin the outgoing transcript before anything replaces it — a queued flush
+    // would otherwise wake up to an empty store and save nothing.
+    const outgoing = { id: get().sessionId, messages: get().messages };
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+    }
+    const flush = () => saveSnapshot(api, outgoing.id, outgoing.messages);
+    saveChain = saveChain.then(flush, flush).then(
+      () => undefined,
+      () => undefined,
+    );
+    await saveChain;
+    // Create the fresh file BEFORE clearing: if this fails we stay on the
+    // current transcript. Clearing first left sessionId null while main still
+    // pointed at the old session — the next save adopted it and replaced the
+    // old conversation with the new transcript.
+    // Deliberately not `adoptOrCreateSession`: this must be a new file, not
+    // the session main is still pointing at.
+    let created: { id: string };
+    try {
+      created = await api.session.new();
+    } catch (e) {
+      set({ error: e instanceof Error ? e.message : String(e) });
+      return;
+    }
+    get().clear();
+    // The transcript is a different one from here on — invalidate queued saves.
+    transcriptEpoch++;
+    set({ sessionId: created.id });
+    await get().refreshSessions();
+  },
+
+  restoreActiveSession: async () => {
+    const api = getBeide();
+    if (!api) return;
+    if (get().sessionId) return;
+    try {
+      const id = await api.session.active();
+      if (!id || get().sessionId) return;
+      const stored = await api.session.load(id);
+      if (get().sessionId) return;
+      // A reload can land mid-stream: deltas that arrived while this was in
+      // flight are newer than everything on disk, so history goes in front of
+      // them instead of replacing them.
+      const live = get().messages;
+      const seen = new Set(live.map((m) => m.id));
+      const history = settleRestored(stored).filter((m) => !seen.has(m.id));
+      set({ messages: [...history, ...live], sessionId: id });
+    } catch {
+      /* nothing to restore */
     }
   },
 
   loadSession: async (id) => {
     const api = getBeide();
     if (!api) return;
-    get().persistSession(true);
+    // Re-loading the open session from disk would wipe live stream deltas.
+    if (id === get().sessionId) return;
+    // Stop a stream that belongs to the outgoing transcript (see newSession).
     try {
-      const messages = await api.session.load(id);
+      await api.agent.abort();
+    } catch {
+      /* ignore */
+    }
+    await get().persistSession(true);
+    try {
+      // settleRestored: a transcript loaded from disk describes finished work.
+      // A mid-turn save (crash, reload) leaves streaming/running flags in the
+      // file — without settling them the tools spin forever in the UI.
+      const messages = settleRestored(await api.session.load(id));
+      transcriptEpoch++;
       set({ messages, sessionId: id, error: null, draft: "", images: [], mentions: [] });
       await get().refreshSessions();
     } catch (e) {
@@ -336,33 +465,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   persistSession: (immediate = false) => {
+    const epoch = transcriptEpoch;
     const run = async () => {
       const api = getBeide();
       if (!api) return;
-      const { messages, sessionId } = get();
+      // The transcript was replaced while this save waited — it has no home now.
+      if (transcriptEpoch !== epoch) return;
+      const messages = get().messages;
       // Skip empty brand-new chats
       if (!messages.length) return;
       try {
-        let id = sessionId;
-        if (!id) {
-          const session = await api.session.new();
-          id = session.id;
+        const id = await saveSnapshot(api, get().sessionId, messages);
+        if (transcriptEpoch !== epoch) return;
+        if (id && !get().sessionId) {
           set({ sessionId: id });
+          // Refresh only on adoption: refreshing on EVERY debounced save made
+          // main re-read the whole sessions dir once per tool call.
+          void get().refreshSessions();
         }
-        // Strip huge base64 images for disk (keep name only)
-        const compact = messages.map((m) => {
-          if (!m.images?.length) return m;
-          return {
-            ...m,
-            images: m.images.map((img) => ({
-              mimeType: img.mimeType,
-              data: img.data.length > 2000 ? "" : img.data,
-              name: img.name,
-            })),
-          };
-        });
-        await api.session.save(id, compact);
-        void get().refreshSessions();
       } catch {
         /* ignore persist errors */
       }
@@ -373,14 +493,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
         clearTimeout(saveTimer);
         saveTimer = null;
       }
-      void run();
-      return;
+      saveChain = saveChain.then(run, run);
+      return saveChain;
     }
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
       saveTimer = null;
-      void run();
+      saveChain = saveChain.then(run, run);
     }, 600);
+    return Promise.resolve();
   },
 
   setError: (error) => set({ error }),

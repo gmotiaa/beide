@@ -1,0 +1,26 @@
+/* design-sync CSS entry for the beide design system.
+ *
+ * The app itself loads its three stylesheets from src/main.tsx and pulls the
+ * brand families (DM Sans / JetBrains Mono) from Google Fonts via a <link> in
+ * index.html. Neither of those exists for a rendered design, so this entry
+ * reproduces the sheets below (the same ones main.tsx imports, in the same
+ * order) while the fonts come in through cfg.extraFonts —
+ * .design-sync/fonts/fonts.css, the Google sheet with its woff2 files
+ * downloaded next to it. A rendered design therefore needs no network: the
+ * remote @import used to live here, and it made every card wait on
+ * fonts.googleapis.com (capture timeouts) and would degrade to system fonts
+ * anywhere the request is blocked.
+ *
+ * Compiled by @tailwindcss/cli into .design-sync/.cache/tailwind.css, which is
+ * what cfg.cssEntry points at. Recompile after authoring previews so the classes
+ * they use are present (see .design-sync/NOTES.md).
+ */
+@import "../src/styles/global.css";
+@import "../src/styles/shell.css";
+@import "../src/styles/onboarding.css";
+
+/* Class scanning: the components themselves plus the preview cards authored
+ * for them. ds-bundle/ and .ds-sync/ are gitignored and therefore never scanned
+ * automatically — the previews/ sources below are the ones that matter. */
+@source "../src";
+@source "./previews";

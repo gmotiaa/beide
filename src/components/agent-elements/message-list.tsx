@@ -8,6 +8,7 @@ import React, {
   useMemo,
 } from "react";
 import type { UIMessage, ChatStatus } from "ai";
+import { useTranslation } from "react-i18next";
 import { cn } from "./utils/cn";
 
 import { UserMessage } from "./user-message";
@@ -53,15 +54,6 @@ export type MessageListProps = {
 };
 
 const SCROLL_THRESHOLD = 80;
-const timeFormatter = new Intl.DateTimeFormat("en-US", {
-  hour: "numeric",
-  minute: "2-digit",
-  hour12: true,
-});
-const dateFormatter = new Intl.DateTimeFormat("en-US", {
-  month: "short",
-  day: "numeric",
-});
 type ToolPartBase = {
   type: string;
   toolCallId?: string;
@@ -149,7 +141,11 @@ function getTextFromParts(parts: unknown[], joiner: string): string {
     .join(joiner);
 }
 
-function formatTimestamp(date: Date): string {
+function formatTimestamp(
+  date: Date,
+  timeFormatter: Intl.DateTimeFormat,
+  dateFormatter: Intl.DateTimeFormat,
+): string {
   const now = new Date();
   const isSameDay =
     date.getFullYear() === now.getFullYear() &&
@@ -170,6 +166,17 @@ function CopyButton({
 }) {
   const [copied, setCopied] = useState(false);
   const copiedTimerRef = useRef<number | null>(null);
+
+  // Clear the pending "copied" reset timer on unmount, otherwise it fires
+  // against an unmounted component.
+  useEffect(() => {
+    return () => {
+      if (copiedTimerRef.current) {
+        window.clearTimeout(copiedTimerRef.current);
+        copiedTimerRef.current = null;
+      }
+    };
+  }, []);
 
   const handleCopy = () => {
     navigator.clipboard.writeText(text);
@@ -281,6 +288,7 @@ export const MessageList = memo(function MessageList({
   classNames,
   toolRenderers,
 }: MessageListProps) {
+  const { t, i18n } = useTranslation();
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const contentWrapperRef = useRef<HTMLDivElement>(null);
   const chatContainerObserverRef = useRef<ResizeObserver | null>(null);
@@ -449,7 +457,22 @@ export const MessageList = memo(function MessageList({
     }
   }, [lastUserMessageId, scrollToBottomSettled]);
 
-  const planningLabel = "Думаю…";
+  const planningLabel = t("agentElements.planning");
+  // Timestamp formatters follow the app locale (12/24-hour clock and month
+  // names come from the locale defaults).
+  const { timeFormatter, dateFormatter } = useMemo(
+    () => ({
+      timeFormatter: new Intl.DateTimeFormat(i18n.language, {
+        hour: "numeric",
+        minute: "2-digit",
+      }),
+      dateFormatter: new Intl.DateTimeFormat(i18n.language, {
+        month: "short",
+        day: "numeric",
+      }),
+    }),
+    [i18n.language],
+  );
   const turns = useMemo(
     () => groupMessagesIntoTurns(normalizedMessages),
     [normalizedMessages],
@@ -533,7 +556,11 @@ export const MessageList = memo(function MessageList({
                     const userCopyVisible = activeCopyId === userCopyKey;
                     const userTimestamp =
                       isMounted && userCreatedAt
-                        ? formatTimestamp(new Date(userCreatedAt))
+                        ? formatTimestamp(
+                            new Date(userCreatedAt),
+                            timeFormatter,
+                            dateFormatter,
+                          )
                         : undefined;
                     // Only render the toolbar when it has content — copy
                     // button (gated by showCopyToolbar) or a timestamp.
@@ -629,7 +656,7 @@ export const MessageList = memo(function MessageList({
                   <ToolRowBase
                     icon={<SpiralLoader size={12} />}
                     shimmerLabel={planningLabel}
-                    completeLabel="Done"
+                    completeLabel={t("agentElements.done")}
                     isAnimating={true}
                   />
                 )}

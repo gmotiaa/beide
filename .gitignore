@@ -48,12 +48,18 @@ coverage/
 .vite/
 *.local
 
-# HeroUI agent docs (from heroui-cli agents-md)
-.heroui-docs/
-
 # misc
 tmp/
 temp/
+tmp-*
 .cache/
-.agents/
 
+# machine-specific Claude Code permissions
+.claude/settings.local.json
+
+# design-sync (claude.ai/design)
+.ds-sync/
+ds-bundle/
+.design-sync/.cache/
+.design-sync/learnings/
+.design-sync/node_modules

@@ -152,7 +152,7 @@ export function TitleBar() {
               </span>
             </TooltipTrigger>
             <TooltipContent side="bottom">
-              {rootPath ? "Сменить папку" : "Открыть папку"}
+              {rootPath ? t("titleBar.changeFolder") : t("common.openFolder")}
             </TooltipContent>
           </Tooltip>
         </div>
@@ -164,14 +164,14 @@ export function TitleBar() {
               className="title-bar__status-badge gap-1.5 border-transparent font-normal"
             >
               <span className="title-bar__live-dot" />
-              думает
+              {t("titleBar.thinking")}
             </Badge>
           ) : (
             <Badge
               variant="outline"
               className="title-bar__status-badge font-normal capitalize"
             >
-              {mode === "plan" ? "план" : "агент"}
+              {mode === "plan" ? t("chat.modePlan") : t("chat.modeAgent")}
             </Badge>
           )}
           {modelShort ? (
@@ -189,18 +189,18 @@ export function TitleBar() {
                   size="sm"
                   variant="ghost"
                   className="title-bar__menu-btn"
-                  aria-label="Меню"
+                  aria-label={t("titleBar.menu")}
                 />
               }
             >
-              Меню
+              {t("titleBar.menu")}
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-[240px]">
               <DropdownMenuGroup>
-                <DropdownMenuLabel>Workspace</DropdownMenuLabel>
+                <DropdownMenuLabel>{t("titleBar.workspace")}</DropdownMenuLabel>
                 <DropdownMenuItem onClick={() => void openFolder()}>
                   <IconFolderOpen className="size-4 text-muted-foreground" />
-                  Открыть папку
+                  {t("common.openFolder")}
                   <DropdownMenuShortcut>
                     <KbdGroup>
                       <Kbd>Ctrl</Kbd>
@@ -211,10 +211,10 @@ export function TitleBar() {
               </DropdownMenuGroup>
               <DropdownMenuSeparator />
               <DropdownMenuGroup>
-                <DropdownMenuLabel>beide</DropdownMenuLabel>
+                <DropdownMenuLabel>{t("common.appName", "beide")}</DropdownMenuLabel>
                 <DropdownMenuItem onClick={() => resetOnboarding()}>
                   <IconSettings className="size-4 text-muted-foreground" />
-                  Показать онбординг
+                  {t("titleBar.showOnboarding")}
                 </DropdownMenuItem>
                 {user ? (
                   <DropdownMenuItem
@@ -222,7 +222,7 @@ export function TitleBar() {
                     onClick={() => void signOut()}
                   >
                     <IconLogout className="size-4" />
-                    Выйти
+                    {t("titleBar.signOut")}
                     <span className="ml-auto max-w-[7rem] truncate text-xs opacity-70">
                       {user.email}
                     </span>
@@ -238,7 +238,7 @@ export function TitleBar() {
                 <Button
                   size="icon-sm"
                   variant="ghost"
-                  aria-label="О beide"
+                  aria-label={t("titleBar.about")}
                   className="title-bar__help"
                 />
               }
@@ -247,15 +247,15 @@ export function TitleBar() {
             </DialogTrigger>
             <DialogContent className="sm:max-w-md" showCloseButton>
               <DialogHeader>
-                <DialogTitle>beide + pi</DialogTitle>
+                <DialogTitle>{t("titleBar.helpTitle")}</DialogTitle>
                 <DialogDescription>
-                  Desktop IDE с AI-агентом на{" "}
+                  {t("titleBar.helpIntro")}{" "}
                   <strong className="text-foreground">
                     @earendil-works/pi-coding-agent
                   </strong>
-                  . Auth Grok — из{" "}
-                  <code className="text-foreground">~/.pi/agent</code>. Режим
-                  агента переключается в чате справа.
+                  {t("titleBar.helpAuth")}{" "}
+                  <code className="text-foreground">~/.pi/agent</code>
+                  {t("titleBar.helpMode")}
                 </DialogDescription>
               </DialogHeader>
               <ul className="flex flex-col gap-2 text-sm text-muted-foreground">
@@ -264,26 +264,26 @@ export function TitleBar() {
                     <Kbd>Ctrl</Kbd>
                     <Kbd>L</Kbd>
                   </KbdGroup>
-                  <span>фокус в чат</span>
+                  <span>{t("titleBar.shortcutChat")}</span>
                 </li>
                 <li className="flex items-center gap-2">
                   <KbdGroup>
                     <Kbd>Ctrl</Kbd>
                     <Kbd>`</Kbd>
                   </KbdGroup>
-                  <span>терминал</span>
+                  <span>{t("titleBar.shortcutTerminal")}</span>
                 </li>
                 <li className="flex items-center gap-2">
                   <KbdGroup>
                     <Kbd>Ctrl</Kbd>
                     <Kbd>S</Kbd>
                   </KbdGroup>
-                  <span>сохранить файл</span>
+                  <span>{t("titleBar.shortcutSave")}</span>
                 </li>
               </ul>
               <DialogFooter>
                 <DialogClose render={<Button type="button" />}>
-                  Понятно
+                  {t("titleBar.gotIt")}
                 </DialogClose>
               </DialogFooter>
             </DialogContent>
@@ -297,11 +297,14 @@ export function TitleBar() {
             </Avatar>
           ) : null}
 
-          <div className="title-bar__win-controls" aria-label="Управление окном">
+          <div
+            className="title-bar__win-controls"
+            aria-label={t("titleBar.windowControls")}
+          >
             <button
               type="button"
               className="title-bar__win-btn"
-              aria-label="Свернуть"
+              aria-label={t("titleBar.minimize")}
               onClick={(e) => {
                 e.stopPropagation();
                 void runWindow("minimize");
@@ -312,7 +315,7 @@ export function TitleBar() {
             <button
               type="button"
               className="title-bar__win-btn"
-              aria-label={maximized ? "Восстановить" : "Развернуть"}
+              aria-label={maximized ? t("titleBar.restore") : t("titleBar.maximize")}
               onClick={(e) => {
                 e.stopPropagation();
                 void runWindow("maximize");
@@ -327,7 +330,7 @@ export function TitleBar() {
             <button
               type="button"
               className={cn("title-bar__win-btn", "title-bar__win-btn--close")}
-              aria-label="Закрыть"
+              aria-label={t("common.close")}
               onClick={(e) => {
                 e.stopPropagation();
                 void runWindow("close");

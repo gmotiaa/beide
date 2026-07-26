@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   IconX as X,
   IconFileText as FileText,
@@ -93,6 +94,7 @@ export function FileAttachment({
   display = "chip",
   enableImagePreview = true,
 }: FileAttachmentProps) {
+  const { t } = useTranslation();
   const [isHovered, setIsHovered] = useState(false);
   const [isLightboxOpen, setIsLightboxOpen] = useState(false);
   const iconName = getFileIconName(filename, isImage);
@@ -179,6 +181,7 @@ export function FileAttachment({
                      text-muted-foreground hover:text-foreground
                      ${isHovered ? "opacity-100" : "opacity-0"}`}
           type="button"
+          aria-label={t("agentElements.removeAttachment")}
         >
           <X className="size-3" />
         </button>

@@ -1,6 +1,4 @@
-"use client";
-
-import type { ReactNode } from "react";
+import type { ReactElement, ReactNode } from "react";
 import { Popover as BasePopover } from "@base-ui/react/popover";
 import { cn } from "../utils/cn";
 
@@ -8,7 +6,12 @@ export type PopoverSide = "top" | "bottom" | "left" | "right";
 export type PopoverAlign = "start" | "center" | "end";
 
 export type PopoverProps = {
-  trigger: ReactNode;
+  /**
+   * Must be a single native <button>. Base UI merges the trigger props onto it
+   * directly — wrapping it in another element would nest one interactive
+   * element inside another and strip the button semantics.
+   */
+  trigger: ReactElement;
   children: ReactNode;
   open?: boolean;
   defaultOpen?: boolean;
@@ -36,13 +39,7 @@ export function Popover({
       defaultOpen={defaultOpen}
       onOpenChange={onOpenChange ? (next) => onOpenChange(next) : undefined}
     >
-      <BasePopover.Trigger
-        render={(props) => (
-          <span {...props} className="inline-flex">
-            {trigger}
-          </span>
-        )}
-      />
+      <BasePopover.Trigger render={trigger} />
       <BasePopover.Portal>
         <BasePopover.Positioner side={side} align={align} sideOffset={sideOffset}>
           <BasePopover.Popup

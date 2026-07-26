@@ -34,6 +34,20 @@ pre,
   background-clip: padding-box;
 }
 
+/* ═══════════════════════════════════════════════════════════
+   Inset workspace
+
+   `--bg` is the recessed canvas the whole window sits on and
+   `--panel` is a raised surface. Panels are separated by a gap
+   and lifted with a ring + shadow instead of being welded
+   together by 1px hairlines.
+   ═══════════════════════════════════════════════════════════ */
+:root {
+  --shell-gap: 6px;
+  --shell-radius: 12px;
+  --shell-ring: inset 0 0 0 1px color-mix(in oklch, var(--border) 70%, transparent);
+}
+
 .app-root {
   background: var(--bg);
 }
@@ -41,22 +55,43 @@ pre,
   display: none;
 }
 
+.app-body {
+  gap: var(--shell-gap);
+  padding: 0 var(--shell-gap) var(--shell-gap);
+  min-height: 0;
+}
+
+.app-main,
+.app-center {
+  gap: var(--shell-gap);
+}
+
+/* Every raised surface in the shell */
+.sidebar,
+.editor-area,
+.chat-panel,
+.terminal-panel,
+.settings-view {
+  border: none;
+  border-radius: var(--shell-radius);
+  background: var(--panel);
+  box-shadow: var(--shell-ring), var(--shadow-sm);
+  overflow: hidden;
+}
+
 /* ── Title ──────────────────────────────────────────────── */
 /* Custom frameless title bar */
+/* Sits directly on the canvas: no fill, no border, no seam. The panels below
+   provide the structure, so the chrome does not need to draw its own. */
 .title-bar {
   height: var(--title-h);
-  padding: 0 0 0 12px;
+  padding: 0 0 0 10px;
   display: flex;
   align-items: center;
   gap: 10px;
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--panel) 92%, var(--accent) 8%) 0%,
-      var(--panel) 100%
-    );
-  border-bottom: 1px solid var(--border);
-  box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--border) 50%, transparent);
+  background: transparent;
+  border-bottom: none;
+  box-shadow: none;
   -webkit-app-region: drag;
   app-region: drag;
   user-select: none;
@@ -122,7 +157,7 @@ pre,
   inset: 0;
   display: grid;
   place-items: center;
-  color: #fff;
+  color: var(--accent-contrast);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: -0.04em;
@@ -390,7 +425,7 @@ html.dark .title-bar {
 }
 
 .usage-limit-card__pct.is-low {
-  color: #d97706;
+  color: var(--warning);
 }
 
 .usage-limit-card__pct-label {
@@ -611,18 +646,20 @@ html.dark .title-bar {
 }
 
 /* ── Activity ───────────────────────────────────────────── */
+/* A rail on the canvas, not a walled-off column. */
 .activity-bar {
-  width: 48px;
-  padding: 10px 0;
-  gap: 4px;
-  background: var(--bg-elevated);
-  border-right: var(--hairline);
+  width: 44px;
+  padding: 2px 0 var(--shell-gap);
+  gap: 2px;
+  background: transparent;
+  border-right: none;
+  backdrop-filter: none;
 }
 
 .activity-btn {
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
   color: var(--text-faint);
   transition:
     background var(--duration-fast) var(--ease-out),
@@ -633,26 +670,34 @@ html.dark .title-bar {
 .activity-btn:hover {
   background: var(--panel-hover);
   color: var(--text);
+  transform: none;
 }
 
 .activity-btn:active {
-  transform: scale(0.96);
+  transform: scale(0.94);
 }
 
+/* A tinted wash was too weak to find at a glance on a warm canvas — the
+   active tool now reads as a solid chip, the way the active tab does. */
 .activity-btn.is-active {
-  color: var(--accent);
-  background: var(--accent-muted);
-  box-shadow: none;
+  color: var(--accent-contrast);
+  background: var(--accent);
+  box-shadow: 0 2px 6px color-mix(in oklch, var(--accent) 30%, transparent);
 }
 
+.activity-btn.is-active:hover {
+  background: var(--accent-hover);
+  color: var(--accent-contrast);
+}
+
+/* The old left-edge tick pointed at a border that no longer exists. */
 .activity-btn.is-active::before {
-  left: -6px;
-  width: 3px;
-  height: 14px;
-  border-radius: 999px;
-  background: var(--accent);
-  top: 50%;
-  transform: translateY(-50%);
+  display: none;
+}
+
+.activity-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 .activity-btn svg {
@@ -663,51 +708,56 @@ html.dark .title-bar {
 
 /* ── Sidebar ────────────────────────────────────────────── */
 .sidebar {
-  background: var(--panel);
-  border-right: var(--hairline);
+  border-right: none;
 }
 
 .sidebar__header {
-  height: 36px;
+  height: 40px;
   padding: 0 14px;
   font-size: 11px;
-  font-weight: 650;
-  letter-spacing: 0.04em;
+  font-weight: 600;
+  letter-spacing: 0.09em;
   text-transform: uppercase;
-  color: var(--text-faint);
-  border-bottom: var(--hairline);
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .sidebar__body {
-  padding: 8px 6px;
+  padding: 6px;
 }
 
 /* FileTree uses reui c-tree-5 Tailwind styles in FileTree.tsx */
 
 /* ── Editor tabs ────────────────────────────────────────── */
+/* The editor is itself a surface now, so the code area drops to the recessed
+   tone and the tab strip reads as a segmented control above it. */
 .editor-area {
-  background: var(--bg);
+  background: var(--panel);
+}
+
+.editor-host {
+  background: var(--monaco-bg);
 }
 
 .tab-bar {
   height: var(--tab-h);
-  background: var(--bg-elevated);
-  border-bottom: var(--hairline);
+  background: transparent;
+  border-bottom: 1px solid var(--border-subtle);
   padding: 0 6px;
-  gap: 4px;
-  align-items: flex-end;
+  gap: 2px;
+  align-items: center;
 }
 
 .tab {
-  height: 28px;
-  margin-bottom: 4px;
-  padding: 0 12px;
+  height: 26px;
+  margin-bottom: 0;
+  padding: 0 10px;
   max-width: 200px;
-  min-width: 96px;
+  min-width: 88px;
   border: none;
   border-right: none;
-  border-radius: 8px;
-  font-size: 12.5px;
+  border-radius: 7px;
+  font-size: 12px;
   font-weight: 500;
   color: var(--text-faint);
   background: transparent;
@@ -722,21 +772,32 @@ html.dark .title-bar {
 }
 
 .tab.is-active {
-  background: var(--bg);
+  background: var(--panel-active);
   color: var(--text);
-  box-shadow: inset 0 0 0 1px var(--border);
+  box-shadow: none;
 }
 
 .tab__dirty {
-  width: 7px;
-  height: 7px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   background: var(--accent);
   box-shadow: none;
 }
 
+.tab__lang {
+  display: none;
+}
+
 .tab__close {
-  border-radius: 6px;
+  border-radius: 5px;
+  opacity: 0;
+}
+
+.tab:hover .tab__close,
+.tab.is-active .tab__close,
+.tab__close:focus-visible {
+  opacity: 1;
 }
 
 /* editor empty state: HeroUI Surface layout in global.css */
@@ -760,7 +821,7 @@ html.dark .title-bar {
 
 .btn-primary {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-contrast);
   border: none;
   box-shadow: var(--accent-glow);
 }
@@ -790,12 +851,14 @@ html.dark .title-bar {
 }
 
 /* Status / terminal */
+/* Everything on this strip is machine state — branch, encoding, cursor
+   position — so it is set in the mono face to match the editor it reports on. */
 .status-bar {
   height: var(--status-h);
-  padding: 0 12px;
-  background: var(--bg-elevated);
-  border-top: var(--hairline);
-  font-family: var(--font-sans);
+  padding: 0 16px;
+  background: transparent;
+  border-top: none;
+  font-family: var(--font-mono);
   font-size: 11px;
   letter-spacing: 0;
   color: var(--text-faint);
@@ -818,14 +881,12 @@ html.dark .title-bar {
 
 /* Terminal follows IDE light/dark tokens (was hardcoded black) */
 .terminal-panel {
-  background: var(--bg-elevated);
-  border-top: var(--hairline);
-  border-radius: 0;
+  border-top: none;
 }
 
 .terminal-panel__header {
-  height: 34px;
-  background: var(--panel);
+  height: 32px;
+  background: transparent;
   border-bottom: 1px solid var(--border-subtle);
 }
 
@@ -840,8 +901,9 @@ html.dark .title-bar {
 .terminal-panel__body {
   font-family: var(--font-mono);
   font-size: 12px;
+  line-height: 1.65;
   color: var(--text);
-  background: var(--bg);
+  background: var(--code-bg);
 }
 
 .terminal-panel__body .term-cmd {
@@ -885,10 +947,40 @@ html.dark .title-bar {
   box-shadow: var(--focus-ring);
 }
 
-.resizer:hover,
-.resizer.is-dragging {
-  background: color-mix(in srgb, var(--accent) 55%, transparent);
-  opacity: 1;
+/* The gap between panels IS the resize gutter. The element itself takes no
+   space; its ::after supplies the grab area and the hover indicator, so the
+   panels stay exactly --shell-gap apart whether or not a resizer sits there. */
+.resizer {
+  background: transparent;
+}
+
+/* A zero-width flex child still collects the container's gap on BOTH sides,
+   which would double the spacing wherever a resizer sits. Pull half a gap back
+   on each side so a gutter with a resizer matches one without. */
+.resizer--vertical {
+  width: 0;
+  margin: 0 calc(var(--shell-gap) / -2);
+}
+
+.resizer--horizontal {
+  height: 0;
+  margin: calc(var(--shell-gap) / -2) 0;
+}
+
+.resizer--vertical::after {
+  inset: 0 calc(var(--shell-gap) / -2);
+  border-radius: 999px;
+}
+
+.resizer--horizontal::after {
+  inset: calc(var(--shell-gap) / -2) 0;
+  border-radius: 999px;
+}
+
+.resizer:hover::after,
+.resizer.is-dragging::after {
+  background: var(--accent);
+  opacity: 0.55;
 }
 
 /* ══════════════════════════════════════════════════════════
@@ -896,14 +988,12 @@ html.dark .title-bar {
    ══════════════════════════════════════════════════════════ */
 .chat-panel {
   width: var(--chat-width, 380px);
-  background: var(--panel, #fff);
-  border-left: var(--hairline);
+  border-left: none;
   position: relative;
   display: flex;
   flex-direction: column;
   min-height: 0;
   height: 100%;
-  overflow: hidden;
 }
 
 /* no red rail */
@@ -912,14 +1002,14 @@ html.dark .title-bar {
 }
 
 .chat-panel--ae {
-  background: var(--panel, #fff);
+  background: var(--panel);
 }
 
 .chat-panel__header {
-  height: 48px;
-  padding: 0 12px 0 16px;
-  border-bottom: 1px solid var(--an-border-color, var(--border));
-  background: var(--panel, #fff);
+  height: 42px;
+  padding: 0 8px 0 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: transparent;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -970,12 +1060,8 @@ html.dark .title-bar {
   font-weight: 650;
   letter-spacing: -0.02em;
   text-transform: none;
-  color: var(--text, #111);
-}
-
-html[data-theme="dark"] .chat-panel__title,
-html[data-theme="midnight"] .chat-panel__title,
-html.dark .chat-panel__title {
+  /* The three per-theme overrides that used to follow all resolved to the same
+     var(--text) this rule already sets. */
   color: var(--text);
 }
 
@@ -1023,18 +1109,16 @@ html.dark .chat-panel__title {
 }
 
 /* body = scroll + composer, never overlaps header/footer */
+/* The panel used to paint itself pure white in light theme while every other
+   surface came from --panel. On a warm palette that reads as a hole punched
+   through the shell, so all three strips (body, composer, footer) now derive
+   from the same tokens as the rest of the workspace. */
 .chat-panel__body {
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
-  background: #fff;
-}
-
-html[data-theme="dark"] .chat-panel__body,
-html[data-theme="midnight"] .chat-panel__body,
-html.dark .chat-panel__body {
   background: var(--an-background, var(--panel));
 }
 
@@ -1091,32 +1175,49 @@ html.dark .chat-panel__body {
 .chat-panel__empty-icon {
   display: grid;
   place-items: center;
-  width: 40px;
-  height: 40px;
+  width: 42px;
+  height: 42px;
   border-radius: 12px;
-  border: 1px solid var(--an-border-color, var(--border));
-  background: var(--an-background-tertiary, var(--panel-hover));
-  color: var(--an-foreground-muted, var(--text-muted));
+  border: 1px solid var(--accent-border);
+  background: var(--accent-muted);
+  color: var(--accent);
   margin-bottom: 2px;
 }
 
-/* bold black logo — as you liked */
+.chat-panel__empty-icon svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: square;
+  stroke-linejoin: miter;
+}
+
+.chat-panel__empty-keys {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 14px;
+}
+
+.chat-panel__empty-keys-hint {
+  margin-left: 4px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+/* bold wordmark */
 .chat-panel__empty-title {
   font-size: 34px;
   font-weight: 700;
   letter-spacing: -0.05em;
   text-transform: none;
-  color: #0a0a0a;
+  color: var(--text);
   border-bottom: none;
   padding: 0;
   line-height: 1;
   margin: 0;
-}
-
-html[data-theme="dark"] .chat-panel__empty-title,
-html[data-theme="midnight"] .chat-panel__empty-title,
-html.dark .chat-panel__empty-title {
-  color: #fafafa;
 }
 
 .chat-panel__empty-body {
@@ -1124,28 +1225,44 @@ html.dark .chat-panel__empty-title {
   max-width: 260px;
   font-size: 13.5px;
   line-height: 1.5;
-  color: #6b6b76;
+  color: var(--text-muted);
 }
 
+/* InputBar brings its own px-3 pb-3, so this wrapper only adds the gap above
+   it. It used to add a second 12px inset on every side. */
 .chat-panel__composer {
   flex-shrink: 0;
-  padding: 8px 12px 10px;
+  padding: 6px 0 0;
   border-top: none;
-  background: #fff;
-}
-
-html[data-theme="dark"] .chat-panel__composer,
-html[data-theme="midnight"] .chat-panel__composer,
-html.dark .chat-panel__composer {
   background: var(--panel);
 }
 
+/* Chips live in the empty state, centred under the copy. */
 .chat-panel__suggestions {
-  display: flex;
-  flex-wrap: wrap;
   justify-content: center;
   gap: 8px;
-  margin-bottom: 10px;
+  margin-top: 18px;
+  max-width: 280px;
+}
+
+.chat-panel__suggestion {
+  height: 30px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--an-border-color);
+  background: transparent;
+  color: var(--an-foreground-muted);
+  font-size: 12.5px;
+  letter-spacing: 0;
+  text-transform: none;
+  transition: background var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out);
+}
+
+.chat-panel__suggestion:hover:not(:disabled) {
+  border-color: var(--accent-border);
+  background: var(--accent-muted);
+  color: var(--accent);
 }
 
 /* bottom strip: small framed AI badge */
@@ -1156,14 +1273,8 @@ html.dark .chat-panel__composer {
   justify-content: center;
   gap: 8px;
   padding: 8px 12px 10px;
-  border-top: 1px solid var(--an-border-color, var(--border));
-  background: #fafafa;
-}
-
-html[data-theme="dark"] .chat-panel__footer,
-html[data-theme="midnight"] .chat-panel__footer,
-html.dark .chat-panel__footer {
-  background: var(--bg-elevated);
+  border-top: 1px solid var(--border-subtle);
+  background: var(--panel);
 }
 
 .chat-panel__ai-badge {
@@ -1173,24 +1284,16 @@ html.dark .chat-panel__footer {
   height: 18px;
   min-width: 28px;
   padding: 0 7px;
-  border: 1px solid #d4d4d8;
+  border: 1px solid var(--accent-border);
   border-radius: 5px;
-  background: #fff;
-  color: #71717a;
+  background: var(--accent-muted);
+  color: var(--accent);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   line-height: 1;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
-}
-
-html[data-theme="dark"] .chat-panel__ai-badge,
-html[data-theme="midnight"] .chat-panel__ai-badge,
-html.dark .chat-panel__ai-badge {
-  background: var(--panel);
-  border-color: var(--border);
-  color: var(--text-faint);
+  box-shadow: none;
 }
 
 .chat-panel__footer-hint {
@@ -1198,50 +1301,40 @@ html.dark .chat-panel__ai-badge {
   font-weight: 500;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: #a1a1aa;
+  color: var(--text-faint);
 }
 
-/* InputBar island */
-.chat-panel--ae .beide-agent-input {
-  /* AE InputBar has its own chrome */
+/* InputBar island — the component ships `ring-1 ring-foreground/10`, which on a
+   warm panel is barely a shade off the surface it sits on. Pin the ring to the
+   same hairline token every other field in the IDE uses. */
+.chat-panel__composer .bg-an-input-background {
+  --tw-ring-color: var(--an-input-border-color);
 }
 
 .chat-panel--ae .max-w-an {
   max-width: 100% !important;
 }
 
-/* Soft suggestion chips (AE-like) */
-.chat-panel__composer .flex.flex-wrap button {
-  border-radius: 8px !important;
-  text-transform: none !important;
-  letter-spacing: 0 !important;
-  font-size: 12.5px !important;
-  height: 30px !important;
-  border-color: var(--an-border-color) !important;
-  color: var(--an-foreground-muted) !important;
+/* The `.chat-panel__composer .flex.flex-wrap button` block that used to live
+   here styled the chips by matching their layout utilities — which also caught
+   the toolbar buttons inside the input. `.chat-panel__suggestion` above is
+   scoped to the chips themselves and needs no !important. */
+
+/* ModeSelector and ModelPicker ship the same trigger: borderless, h-7,
+   rounded-[6px], muted text. This file used to box the mode one into a filled
+   28px pill with eight !important declarations, so two controls sitting side by
+   side in the same toolbar looked like they came from different kits. Both are
+   left to the library now; only the muted tone is pinned to our palette, since
+   the stock `text-foreground/40` washes out on the warm surface. */
+.chat-panel--ae button[aria-label="Select mode"],
+.chat-panel--ae button[aria-label="Select model"] {
+  color: var(--text-muted);
 }
 
-.chat-panel__composer .flex.flex-wrap button:hover {
-  background: var(--an-background-secondary) !important;
-  color: var(--an-foreground) !important;
-}
-
-/* Mode selector soft pill */
-.chat-panel--ae button[aria-label="Select mode"] {
-  border: 1px solid var(--an-border-color) !important;
-  background: var(--an-background-tertiary, #f8f8f8) !important;
-  color: var(--an-foreground-muted) !important;
-  border-radius: 8px !important;
-  height: 28px !important;
-  font-size: 12px !important;
-  font-weight: 550 !important;
-  letter-spacing: 0 !important;
-  text-transform: none !important;
-}
-
-.chat-panel--ae button[aria-label="Select mode"]:hover {
-  background: var(--an-background-secondary) !important;
-  color: var(--an-foreground) !important;
+.chat-panel--ae button[aria-label="Select mode"]:hover,
+.chat-panel--ae button[aria-label="Select model"]:hover {
+  background: var(--panel-hover);
+  color: var(--text);
 }
 
 /* Message list breathing */
@@ -1252,19 +1345,19 @@ html.dark .chat-panel__ai-badge {
 
 /* Diff permission dialog (shadcn Dialog) */
 .diff-dialog {
-  --diff-add-bg: color-mix(in srgb, #22c55e 14%, transparent);
-  --diff-del-bg: color-mix(in srgb, #ef4444 14%, transparent);
+  --diff-add-bg: var(--success-muted);
+  --diff-del-bg: var(--danger-muted);
   --diff-hunk: var(--text-muted);
 }
 
 .diff-view__line--add {
   background: var(--diff-add-bg);
-  color: color-mix(in srgb, #15803d 80%, var(--text));
+  color: var(--success);
 }
 
 .diff-view__line--del {
   background: var(--diff-del-bg);
-  color: color-mix(in srgb, #b91c1c 80%, var(--text));
+  color: var(--danger);
 }
 
 .diff-view__line--hunk {
@@ -1277,21 +1370,9 @@ html.dark .chat-panel__ai-badge {
   color: var(--text-faint);
 }
 
-html[data-theme="dark"] .diff-view__line--add,
-html[data-theme="midnight"] .diff-view__line--add,
-html.dark .diff-view__line--add {
-  color: #4ade80;
-}
-
-html[data-theme="dark"] .diff-view__line--del,
-html[data-theme="midnight"] .diff-view__line--del,
-html.dark .diff-view__line--del {
-  color: #f87171;
-}
-
 .diff-modal-backdrop {
   backdrop-filter: blur(6px);
-  background: rgba(15, 15, 20, 0.35);
+  background: rgb(var(--shadow-color) / 0.35);
 }
 
 /* Monaco light defaults when theme light */
@@ -1302,5 +1383,5 @@ html[data-theme="light"] {
 .app-boot {
   height: 100%;
   width: 100%;
-  background: #f7f7f8;
+  background: var(--bg);
 }

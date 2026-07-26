@@ -1,4 +1,5 @@
 import { memo, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import { IconPaperclip, IconPlus } from "@tabler/icons-react";
 
 export type AttachmentButtonIcon = "plus" | "paperclip";
@@ -24,7 +25,8 @@ export const AttachmentButton = memo(function AttachmentButton({
   onClick,
   icon = "plus",
 }: AttachmentButtonProps) {
-  const iconClassName = "w-4 h-4 text-neutral-400 dark:text-neutral-600";
+  const { t } = useTranslation();
+  const iconClassName = "w-4 h-4 text-muted-foreground";
   let iconNode: ReactNode;
   if (isIconName(icon)) {
     iconNode =
@@ -42,7 +44,7 @@ export const AttachmentButton = memo(function AttachmentButton({
       type="button"
       onClick={onClick}
       className="size-7 rounded-full flex items-center justify-center hover:bg-muted transition-colors cursor-pointer"
-      aria-label="Attach"
+      aria-label={t("agentElements.attach")}
     >
       {iconNode}
     </button>

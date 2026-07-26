@@ -107,11 +107,20 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     }));
   },
 
-  markSaved: (path, content) => {
+  /**
+   * `savedContent` is what actually reached disk. The buffer is left alone —
+   * keystrokes made while the write was in flight must survive — and `dirty` is
+   * recomputed against what was written.
+   */
+  markSaved: (path, savedContent) => {
     set((s) => ({
       tabs: s.tabs.map((t) =>
         t.path === path
-          ? { ...t, content, originalContent: content, dirty: false }
+          ? {
+              ...t,
+              originalContent: savedContent,
+              dirty: t.content !== savedContent,
+            }
           : t,
       ),
     }));
@@ -122,8 +131,18 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     if (!tab || !tab.dirty) return;
     const api = getBeide();
     if (!api) return;
-    await api.workspace.writeFile(path, tab.content);
-    get().markSaved(path, tab.content);
+    const written = tab.content;
+    try {
+      await api.workspace.writeFile(path, written);
+    } catch (e) {
+      // Ctrl+S callers fire-and-forget; without this a locked/readonly file
+      // failed silently — tab stayed dirty with no indication why.
+      const msg = e instanceof Error ? e.message : String(e);
+      set({ lastError: `Cannot save ${path}: ${msg}` });
+      return;
+    }
+    get().markSaved(path, written);
+    set({ lastError: null });
   },
 
   saveActive: async () => {
@@ -136,6 +155,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const api = getBeide();
     if (!api) return;
     const content = await api.workspace.readFile(path);
+    // Callers check `dirty` before calling; re-check here so keystrokes made
+    // while the read was in flight aren't overwritten.
+    if (get().tabs.find((t) => t.path === path)?.dirty) return;
     set((s) => ({
       tabs: s.tabs.map((t) =>
         t.path === path

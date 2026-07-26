@@ -1,8 +1,9 @@
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, open, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { spawn } from "node:child_process";
 import type { BrowserWindow } from "electron";
 import { Type } from "typebox";
+import { Agent as UndiciAgent, setGlobalDispatcher } from "undici";
 import {
   createAgentSession,
   createBashToolDefinition,
@@ -17,26 +18,163 @@ import {
   SettingsManager,
   type AgentSession,
 } from "@earendil-works/pi-coding-agent";
+
+/** NVIDIA (and similar) need longer connect/body timeouts than Node undici defaults */
+let httpDispatcherReady = false;
+function ensureHttpDispatcher(): void {
+  if (httpDispatcherReady) return;
+  httpDispatcherReady = true;
+  setGlobalDispatcher(
+    new UndiciAgent({
+      connect: { timeout: 60_000 },
+      headersTimeout: 300_000,
+      bodyTimeout: 300_000,
+      keepAliveTimeout: 30_000,
+    }),
+  );
+}
 import type {
   AgentMode,
   AgentPromptPayload,
   ChatMessage,
   ChatMention,
+  ProviderStatus,
 } from "../../src/lib/types";
+import {
+  ANTHROPIC_BASE_URL,
+  DEFAULT_MODEL_ID,
+  GOOGLE_BASE_URL,
+  MODEL_CATALOG,
+  NVIDIA_BASE_URL,
+  findModel,
+} from "../../src/lib/models";
 import type { CheckpointService } from "./checkpoints";
 import type { PermissionGateway } from "./permissions";
 import {
   getPiAgentDir,
   getRulesCandidates,
-  resolveInWorkspace,
+  resolveRealInWorkspace,
   toWorkspaceRelative,
 } from "./paths";
 import type { SessionService } from "./sessions";
 import type { SettingsService } from "./settings";
 import type { UsageService } from "./usage";
 
-const PREFERRED_PROVIDER = "xai";
-const PREFERRED_MODEL = "grok-4.5";
+const PREFERRED_MODEL = DEFAULT_MODEL_ID;
+const XAI_FALLBACK_MODEL = "grok-4.5";
+
+/**
+ * API keys MUST be read lazily at call time, not at module load.
+ * In ESM, all imports are evaluated before the importing module's body runs,
+ * so main.ts's loadEnvFile() hasn't executed yet when this module loads.
+ * Capturing process.env at top level would always yield "".
+ */
+function googleApiKey(): string {
+  return process.env.BEIDE_GOOGLE_API_KEY ?? "";
+}
+function nvidiaApiKey(): string {
+  return process.env.BEIDE_NVIDIA_API_KEY ?? "";
+}
+
+/**
+ * Credentials pi keeps in ~/.pi/agent/auth.json. Only the shape is inspected —
+ * beide never reads, copies or logs the token itself.
+ */
+async function readStoredAuth(): Promise<Record<string, { type?: string }>> {
+  try {
+    const raw = await readFile(join(getPiAgentDir(), "auth.json"), "utf-8");
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return {};
+    return parsed as Record<string, { type?: string }>;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Which providers can actually serve a request right now. Anthropic and xAI
+ * come from a `pi auth login` (subscription OAuth or a pasted key); Google and
+ * NVIDIA come from beide's own .env, and are mirrored into auth.json later.
+ */
+export async function readProviderStatus(): Promise<ProviderStatus[]> {
+  const auth = await readStoredAuth();
+  const stored = (id: string): ProviderStatus["kind"] => {
+    const type = auth[id]?.type;
+    return type === "oauth" || type === "api_key" ? type : null;
+  };
+  const fromEnv = (id: string, key: string): ProviderStatus => ({
+    id: id as ProviderStatus["id"],
+    label: PROVIDER_LABELS[id as ProviderStatus["id"]],
+    connected: Boolean(key) || stored(id) !== null,
+    kind: key ? "api_key" : stored(id),
+  });
+  return [
+    {
+      id: "anthropic",
+      label: PROVIDER_LABELS.anthropic,
+      connected: stored("anthropic") !== null,
+      kind: stored("anthropic"),
+    },
+    fromEnv("nvidia", nvidiaApiKey()),
+    fromEnv("google", googleApiKey()),
+    {
+      id: "xai",
+      label: PROVIDER_LABELS.xai,
+      connected: stored("xai") !== null,
+      kind: stored("xai"),
+    },
+  ];
+}
+
+const PROVIDER_LABELS: Record<ProviderStatus["id"], string> = {
+  anthropic: "Anthropic",
+  nvidia: "NVIDIA NIM",
+  google: "Google Gemini",
+  xai: "xAI",
+};
+
+const ZERO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+
+/**
+ * OpenAI-compat for integrate.api.nvidia.com.
+ * supportsUsageInStreaming:false — some NIM endpoints mishandle stream_options.
+ * maxTokensField: max_tokens — required (not max_completion_tokens).
+ */
+const NVIDIA_COMPAT = {
+  supportsStore: false,
+  supportsDeveloperRole: false,
+  supportsReasoningEffort: false,
+  supportsUsageInStreaming: false,
+  maxTokensField: "max_tokens" as const,
+  supportsStrictMode: false,
+  supportsLongCacheRetention: false,
+};
+
+/**
+ * NIM model descriptors, derived from the shared catalog so the picker and the
+ * resolver can never disagree. `body.model` is exactly the catalog id.
+ */
+const NVIDIA_MODELS: Record<string, Record<string, unknown>> = Object.fromEntries(
+  MODEL_CATALOG.filter((m) => m.provider === "nvidia").map((m) => [
+    m.id,
+    {
+      id: m.id,
+      name: `${m.name} ${m.version}`,
+      api: "openai-completions" as const,
+      provider: "nvidia" as const,
+      baseUrl: NVIDIA_BASE_URL,
+      reasoning: false,
+      input: m.supportsImages
+        ? (["text", "image"] as Array<"text" | "image">)
+        : (["text"] as Array<"text" | "image">),
+      cost: ZERO_COST,
+      contextWindow: m.contextWindow,
+      maxTokens: m.maxTokens,
+      headers: { "NVCF-POLL-SECONDS": "3600" },
+      compat: NVIDIA_COMPAT,
+    },
+  ]),
+);
 
 function buildSystemPrompt(mode: AgentMode): string {
   const base = [
@@ -152,7 +290,7 @@ async function buildQuickWorkspaceMap(
     "docs",
   ]);
   const lines: string[] = [];
-  const base = relRoot ? join(cwd, relRoot) : cwd;
+  const base = await resolveRealInWorkspace(cwd, relRoot);
 
   const walk = async (dir: string, prefix: string, level: number) => {
     if (lines.length >= 200 || level > depth) return;
@@ -220,9 +358,9 @@ async function buildWorkspaceTreeSnapshot(cwd: string, maxEntries = 250): Promis
     });
     for (const entry of entries) {
       if (lines.length >= maxEntries) break;
-      if (entry.name.startsWith(".") && entry.name !== ".env.example") {
-        if (skip.has(entry.name) || entry.name === ".git") continue;
-      }
+      // Dotfiles stay out of the model's context: `.env` and friends hold
+      // secrets and there is nothing useful in listing them.
+      if (entry.name.startsWith(".") && entry.name !== ".env.example") continue;
       if (skip.has(entry.name)) continue;
       const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
       if (entry.isDirectory()) {
@@ -238,9 +376,7 @@ async function buildWorkspaceTreeSnapshot(cwd: string, maxEntries = 250): Promis
   if (!lines.length) return "";
   const body = lines.slice(0, maxEntries).join("\n");
   const more = lines.length >= maxEntries ? "\n… (truncated — use ls/find for more)" : "";
-  return `## Workspace file tree (snapshot)\n\
-\
-${body}${more}`;
+  return `## Workspace file tree (snapshot)\n\n${body}${more}`;
 }
 
 function mentionsPreamble(mentions: ChatMention[]): string {
@@ -264,16 +400,28 @@ function openFilesPreamble(activeFile?: string, openFiles?: string[]): string {
   return `## Editor context\n${lines.join("\n")}\n\n`;
 }
 
+/** Files above this size are never inlined into the prompt — read the head via the tool instead. */
+const MAX_CONTEXT_FILE_BYTES = 2_000_000;
+
 /** Best-effort inject of active editor buffer so agent doesn't re-read blindly. */
 async function activeFileSnippet(
   cwd: string,
   activeFile?: string,
+  editorContent?: string,
   maxChars = 24_000,
 ): Promise<string> {
   if (!activeFile) return "";
   try {
-    const abs = resolveInWorkspace(cwd, activeFile);
-    const text = await readFile(abs, "utf-8");
+    let text: string;
+    if (editorContent !== undefined) {
+      text = editorContent;
+    } else {
+      const abs = await resolveRealInWorkspace(cwd, activeFile);
+      if ((await stat(abs)).size > MAX_CONTEXT_FILE_BYTES) {
+        return `## Active file\n\`${activeFile}\` (too large to inline — use read)\n\n`;
+      }
+      text = await readFile(abs, "utf-8");
+    }
     if (!text.trim()) return "";
     const clipped =
       text.length > maxChars
@@ -285,8 +433,55 @@ async function activeFileSnippet(
   }
 }
 
+/**
+ * Passing custom `operations` to the read tool replaces the SDK defaults whole,
+ * including its image sniffer — re-detect by magic bytes so image reads keep
+ * working instead of arriving as garbled text.
+ */
+function sniffImageMimeType(head: Buffer): string | null {
+  const ascii = (offset: number, text: string) =>
+    head.subarray(offset, offset + text.length).toString("latin1") === text;
+  if (head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff) return "image/jpeg";
+  if (ascii(1, "PNG\r\n\x1a\n") && head[0] === 0x89) return "image/png";
+  if (ascii(0, "GIF")) return "image/gif";
+  if (ascii(0, "RIFF") && ascii(8, "WEBP")) return "image/webp";
+  if (ascii(0, "BM") && looksLikeBmpHeader(head)) return "image/bmp";
+  return null;
+}
+
+/**
+ * "BM" alone also opens plenty of ordinary text ("BMW notes", "BM_API_KEY=…"),
+ * and a false positive here means the file is returned as a broken image
+ * instead of its contents. Require a plausible DIB header too.
+ */
+function looksLikeBmpHeader(head: Buffer): boolean {
+  if (head.length < 18) return false;
+  const pixelDataOffset = head.readUInt32LE(10);
+  const dibHeaderSize = head.readUInt32LE(14);
+  if (dibHeaderSize !== 12 && (dibHeaderSize < 40 || dibHeaderSize > 124)) return false;
+  return pixelDataOffset >= 14 + dibHeaderSize;
+}
+
 function uid(prefix: string): string {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+async function readJsonObject(path: string): Promise<Record<string, unknown>> {
+  try {
+    const parsed: unknown = JSON.parse(await readFile(path, "utf-8"));
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // missing or corrupt — start fresh
+  }
+  return {};
+}
+
+async function writeJsonAtomic(path: string, data: unknown): Promise<void> {
+  const tmp = `${path}.tmp_${process.pid}`;
+  await writeFile(tmp, JSON.stringify(data, null, 2), "utf-8");
+  await rename(tmp, path);
 }
 
 export class AgentService {
@@ -296,11 +491,24 @@ export class AgentService {
   private workspaceRoot: string | null = null;
   private mode: AgentMode = "agent";
   private streaming = false;
+  private selectedModelId: string | null = null;
   private modelLabel: string | undefined;
   private modelRuntime: ModelRuntime | null = null;
+  private modelSupportsImages = false;
   private initPromise: Promise<void> | null = null;
+  private runtimePromise: Promise<ModelRuntime> | null = null;
   /** Serialize prompts — prevent concurrent session.prompt races */
   private promptChain: Promise<unknown> = Promise.resolve();
+
+  private streamBuffer: unknown[] = [];
+  private streamTimer: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * Session file the in-flight turn belongs to, captured when the prompt
+   * starts. Events are tagged with it so the renderer can drop stream events
+   * that arrive after the user switched to another chat — untagged they used
+   * to be appended to (and then saved into) whatever transcript was open.
+   */
+  private currentTurnSessionId: string | null = null;
 
   constructor(
     private readonly settings: SettingsService,
@@ -316,6 +524,13 @@ export class AgentService {
   }
 
   async onWorkspaceChanged(root: string | null): Promise<void> {
+    // Serialize with prompt chain to prevent teardown mid-prompt
+    const run = () => this.onWorkspaceChangedImpl(root);
+    this.promptChain = this.promptChain.then(run, run);
+    return this.promptChain as Promise<void>;
+  }
+
+  private async onWorkspaceChangedImpl(root: string | null): Promise<void> {
     await this.teardownSession();
     this.workspaceRoot = root;
     this.checkpoints.setWorkspace(root);
@@ -324,7 +539,6 @@ export class AgentService {
       const s = await this.settings.get();
       this.mode = s.defaultAgentMode;
       this.permissions.setMode(s.permissionMode);
-      // Lazy init on first prompt; pre-warm model runtime
       void this.ensureRuntime();
     }
   }
@@ -348,7 +562,21 @@ export class AgentService {
     };
   }
 
+  /** Credential status per provider, for the settings screen. */
+  getProviders(): Promise<ProviderStatus[]> {
+    return readProviderStatus();
+  }
+
   async setMode(mode: AgentMode): Promise<void> {
+    // Serialized through promptChain: switching while createSession is still
+    // in flight used to leave plan mode holding an agent-mode session (with
+    // write/edit tools) until the next teardown.
+    const run = () => this.setModeImpl(mode);
+    this.promptChain = this.promptChain.then(run, run);
+    return this.promptChain as Promise<void>;
+  }
+
+  private async setModeImpl(mode: AgentMode): Promise<void> {
     if (this.mode === mode && this.session) return;
     this.mode = mode;
     // Rebuild session so tool allowlist + system prompt match mode
@@ -356,6 +584,23 @@ export class AgentService {
       await this.teardownSession();
       // Session recreated lazily on next prompt
     }
+  }
+
+  async setModel(modelId: string): Promise<void> {
+    const run = () => this.setModelImpl(modelId);
+    this.promptChain = this.promptChain.then(run, run);
+    return this.promptChain as Promise<void>;
+  }
+
+  private async setModelImpl(modelId: string): Promise<void> {
+    const id = modelId.trim();
+    if (!id) return;
+    this.selectedModelId = id;
+    this.modelLabel = id;
+    if (this.workspaceRoot) {
+      await this.teardownSession();
+    }
+    this.emit({ type: "beide:model", model: id });
   }
 
   async prompt(payload: AgentPromptPayload): Promise<{ ok: boolean; error?: string }> {
@@ -387,11 +632,15 @@ export class AgentService {
 
     try {
       if (payload.mode && payload.mode !== this.mode) {
-        await this.setMode(payload.mode);
+        // Already inside promptChain — calling setMode() here would deadlock.
+        await this.setModeImpl(payload.mode);
       }
 
       await this.ensureSession();
-      if (!this.session) {
+      // Hold the session locally: teardownSession() can null the field while we
+      // await below, which would turn the later reads into a TypeError.
+      const session = this.session;
+      if (!session) {
         return { ok: false, error: "Agent session failed to start" };
       }
 
@@ -401,6 +650,7 @@ export class AgentService {
       const activeSnippet = await activeFileSnippet(
         this.workspaceRoot,
         payload.activeFile,
+        payload.activeFileContent,
       );
       const preamble = [
         openFilesPreamble(payload.activeFile, payload.openFiles),
@@ -422,7 +672,11 @@ export class AgentService {
           continue;
         }
         try {
-          const abs = resolveInWorkspace(this.workspaceRoot, m.path);
+          const abs = await resolveRealInWorkspace(this.workspaceRoot, m.path);
+          if ((await stat(abs)).size > MAX_CONTEXT_FILE_BYTES) {
+            mentionBodies += `\n### File: ${m.path}\n(too large to inline — use read)\n`;
+            continue;
+          }
           const text = await readFile(abs, "utf-8");
           const clipped =
             text.length > 80_000 ? `${text.slice(0, 80_000)}\n…[truncated]` : text;
@@ -434,11 +688,20 @@ export class AgentService {
 
       const text = `${preamble}${mentionBodies}${userText}`.trim();
 
-      const images = (payload.images ?? []).slice(0, 8).map((img) => ({
+      const rawImages = (payload.images ?? []).slice(0, 8).map((img) => ({
         type: "image" as const,
         data: img.data,
         mimeType: img.mimeType,
       }));
+
+      // Drop images if the current model doesn't support image input
+      const images = this.modelSupportsImages ? rawImages : [];
+      if (rawImages.length && !this.modelSupportsImages) {
+        this.emit({
+          type: "beide:warning",
+          message: `Модель ${this.modelLabel ?? "unknown"} не поддерживает изображения — картинки были отброшены.`,
+        });
+      }
 
       // Persist user message
       const userMsg: ChatMessage = {
@@ -450,18 +713,21 @@ export class AgentService {
         createdAt: Date.now(),
       };
       await this.sessions.appendMessages([userMsg], this.mode);
+      // appendMessages ensured an active session — that is the file this turn
+      // streams into, no matter what the user opens meanwhile.
+      this.currentTurnSessionId = this.sessions.getActiveId();
 
       this.streaming = true;
       this.emit({ type: "beide:status", streaming: true, mode: this.mode });
 
       try {
-        if (this.session.isStreaming) {
-          await this.session.prompt(text, {
+        if (session.isStreaming) {
+          await session.prompt(text, {
             images: images.length ? images : undefined,
             streamingBehavior: "followUp",
           });
         } else {
-          await this.session.prompt(text, {
+          await session.prompt(text, {
             images: images.length ? images : undefined,
           });
         }
@@ -496,24 +762,290 @@ export class AgentService {
 
   // ── internals ──────────────────────────────────────────────
 
+  /**
+   * The window can be gone while the agent is still streaming (user closed it
+   * mid-turn). `webContents.send` on a destroyed window throws, so every
+   * outbound event goes through here.
+   */
+  private send(event: unknown): void {
+    const win = this.mainWindow;
+    if (!win || win.isDestroyed()) return;
+    // Tag with the turn's session (not the currently active one: the user may
+    // have switched sessions while this turn was still streaming).
+    const sessionId = this.currentTurnSessionId ?? this.sessions.getActiveId();
+    const tagged =
+      sessionId && event && typeof event === "object" && !Array.isArray(event)
+        ? { ...(event as Record<string, unknown>), beideSessionId: sessionId }
+        : event;
+    try {
+      win.webContents.send("agent:event", tagged);
+    } catch {
+      // renderer torn down between the check and the send
+    }
+  }
+
   private emit(event: unknown): void {
-    this.mainWindow?.webContents.send("agent:event", event);
+    if (this.isTextDeltaEvent(event)) {
+      this.streamBuffer.push(event);
+      if (!this.streamTimer) {
+        this.streamTimer = setTimeout(() => this.flushStreamBuffer(), 30);
+      }
+    } else {
+      this.flushStreamBuffer();
+      this.send(event);
+    }
+  }
+
+  private isTextDeltaEvent(event: unknown): boolean {
+    if (!event || typeof event !== "object") return false;
+    const ev = event as Record<string, unknown>;
+    if (ev.type === "text_delta" || ev.type === "content_delta") return true;
+    if (ev.type === "message_update") {
+      const ame = (ev.assistantMessageEvent as Record<string, unknown>) ?? {};
+      const ameType = String(ame.type ?? "").toLowerCase();
+      if (ameType === "text_delta" || ameType === "text") return true;
+    }
+    return false;
+  }
+
+  private flushStreamBuffer(): void {
+    if (this.streamTimer) {
+      clearTimeout(this.streamTimer);
+      this.streamTimer = null;
+    }
+    if (this.streamBuffer.length === 0) return;
+
+    const events = this.streamBuffer;
+    this.streamBuffer = [];
+
+    if (events.length === 1) {
+      this.send(events[0]);
+      return;
+    }
+
+    let combinedDelta = "";
+    let sampleEvent: Record<string, unknown> | null = null;
+    let canCombine = true;
+
+    for (const ev of events) {
+      const r = ev as Record<string, unknown>;
+      if (r.type === "message_update") {
+        const ame = r.assistantMessageEvent as Record<string, unknown> | undefined;
+        const ameType = String(ame?.type ?? "").toLowerCase();
+        if (ameType === "text_delta" || ameType === "text") {
+          const delta =
+            typeof ame?.delta === "string"
+              ? ame.delta
+              : typeof ame?.text === "string"
+                ? ame.text
+                : typeof ame?.content === "string"
+                  ? ame.content
+                  : "";
+          combinedDelta += delta;
+          sampleEvent = r;
+          continue;
+        }
+      }
+      canCombine = false;
+      break;
+    }
+
+    if (canCombine && sampleEvent && combinedDelta) {
+      const ame = (sampleEvent.assistantMessageEvent as Record<string, unknown>) ?? {};
+      // `text`/`content` on the sample still hold only the LAST chunk. Leaving
+      // them in place would let a consumer that prefers those fields drop every
+      // batched delta but the final one — carry the combined text in all three.
+      const batched: Record<string, unknown> = { ...ame, delta: combinedDelta };
+      if ("text" in ame) batched.text = combinedDelta;
+      if ("content" in ame) batched.content = combinedDelta;
+      this.send({ ...sampleEvent, assistantMessageEvent: batched });
+    } else {
+      for (const ev of events) {
+        this.send(ev);
+      }
+    }
+  }
+
+  private async setupCustomProviders(agentDir: string): Promise<void> {
+    try {
+      const GOOGLE_API_KEY = googleApiKey();
+      const NVIDIA_API_KEY = nvidiaApiKey();
+      if (GOOGLE_API_KEY) process.env.GEMINI_API_KEY = GOOGLE_API_KEY;
+      if (NVIDIA_API_KEY) process.env.NVIDIA_API_KEY = NVIDIA_API_KEY;
+      // Nothing to mirror — leave pi's files exactly as the user (or pi CLI)
+      // left them.
+      if (!GOOGLE_API_KEY && !NVIDIA_API_KEY) return;
+
+      const authPath = join(agentDir, "auth.json");
+      const modelsJsonPath = join(agentDir, "models.json");
+
+      // ~/.pi/agent/auth.json and models.json are shared with the pi CLI and
+      // any other tool the user runs. Only ever ADD/refresh the providers beide
+      // owns a .env key for; an empty .env key must not delete a credential the
+      // user configured elsewhere. Writes are tmp+rename: these files hold the
+      // user's OAuth tokens, and a crash mid-write would destroy them all.
+      const authData = await readJsonObject(authPath);
+      if (GOOGLE_API_KEY) authData.google = { type: "api_key", key: GOOGLE_API_KEY };
+      if (NVIDIA_API_KEY) authData.nvidia = { type: "api_key", key: NVIDIA_API_KEY };
+      await writeJsonAtomic(authPath, authData);
+
+      // Auth only — never re-list NIM models here (overlay drops baseUrl → 404 on wrong host)
+      const modelsConfig = await readJsonObject(modelsJsonPath);
+      const providers =
+        modelsConfig.providers && typeof modelsConfig.providers === "object"
+          ? (modelsConfig.providers as Record<string, unknown>)
+          : {};
+      if (GOOGLE_API_KEY) providers.google = { apiKey: GOOGLE_API_KEY };
+      if (NVIDIA_API_KEY) {
+        providers.nvidia = {
+          apiKey: NVIDIA_API_KEY,
+          baseUrl: NVIDIA_BASE_URL,
+          api: "openai-completions",
+        };
+      }
+      modelsConfig.providers = providers;
+      await writeJsonAtomic(modelsJsonPath, modelsConfig);
+    } catch (e) {
+      console.error("[setupCustomProviders error]:", e);
+    }
   }
 
   private async ensureRuntime(): Promise<ModelRuntime> {
-    if (this.modelRuntime) return this.modelRuntime;
+    ensureHttpDispatcher();
+    const GOOGLE_API_KEY = googleApiKey();
+    const NVIDIA_API_KEY = nvidiaApiKey();
+    if (this.modelRuntime) {
+      // Always refresh runtime key (user may have rotated nvapi-…)
+      await this.modelRuntime.setRuntimeApiKey("nvidia", NVIDIA_API_KEY);
+      await this.modelRuntime.setRuntimeApiKey("google", GOOGLE_API_KEY);
+      return this.modelRuntime;
+    }
+    // Two concurrent callers would both write auth.json/models.json and could
+    // interleave into a corrupt file — share the first in-flight creation.
+    if (this.runtimePromise) return this.runtimePromise;
+    this.runtimePromise = this.createRuntime(GOOGLE_API_KEY, NVIDIA_API_KEY);
+    try {
+      return await this.runtimePromise;
+    } finally {
+      this.runtimePromise = null;
+    }
+  }
+
+  private async createRuntime(
+    googleKey: string,
+    nvidiaKey: string,
+  ): Promise<ModelRuntime> {
     const agentDir = getPiAgentDir();
     try {
       await mkdir(agentDir, { recursive: true });
     } catch {
       // ok
     }
-    // Reuse the same ~/.pi/agent auth + models-store as the pi CLI
-    this.modelRuntime = await ModelRuntime.create({
+    await this.setupCustomProviders(agentDir);
+    const runtime = await ModelRuntime.create({
       authPath: join(agentDir, "auth.json"),
+      modelsPath: join(agentDir, "models.json"),
       modelsStorePath: join(agentDir, "models-store.json"),
     });
-    return this.modelRuntime;
+    await runtime.setRuntimeApiKey("google", googleKey);
+    await runtime.setRuntimeApiKey("nvidia", nvidiaKey);
+    this.modelRuntime = runtime;
+    return runtime;
+  }
+
+  /**
+   * Resolve picker id → model for createAgentSession.
+   * NVIDIA body.model is EXACTLY the picker id (e.g. deepseek-ai/deepseek-v4-pro).
+   * Always force baseUrl — empty baseUrl from models-store causes 404 on wrong host.
+   */
+  private async resolveModel(
+    modelRuntime: ModelRuntime,
+    modelId: string | null,
+  ): Promise<any | undefined> {
+    if (!modelId) return undefined;
+    const id = modelId.trim();
+    if (!id) return undefined;
+
+    // Accept `provider/id` from the picker as well as the bare catalog id.
+    const catalogId = findModel(id)?.id ?? id;
+
+    // Prefer our explicit NIM models (correct id + baseUrl + compat)
+    if (NVIDIA_MODELS[catalogId]) {
+      const hard = { ...NVIDIA_MODELS[catalogId] };
+      // Merge any richer built-in metadata if present, but never lose id/baseUrl
+      const builtin = modelRuntime.getModel("nvidia", catalogId);
+      if (builtin) {
+        return {
+          ...builtin,
+          id: catalogId,
+          provider: "nvidia",
+          baseUrl: NVIDIA_BASE_URL,
+          api: "openai-completions",
+          headers: {
+            ...(builtin.headers ?? {}),
+            ...(hard.headers as Record<string, string>),
+          },
+          compat: { ...(builtin.compat ?? {}), ...NVIDIA_COMPAT },
+        };
+      }
+      return hard;
+    }
+
+    const entry = findModel(catalogId);
+
+    if (entry?.provider === "anthropic") {
+      // pi ships the real Anthropic descriptors (cost, thinking levels, compat)
+      // and composes auth from ~/.pi/agent/auth.json — an OAuth credential from
+      // `pi auth` is picked up here without beide ever touching the token.
+      // The literal below is only a fallback for a cold models-store.
+      return (
+        modelRuntime.getModel("anthropic", entry.id) ?? {
+          id: entry.id,
+          name: `${entry.name} ${entry.version}`,
+          api: "anthropic-messages",
+          provider: "anthropic",
+          baseUrl: ANTHROPIC_BASE_URL,
+          reasoning: true,
+          input: ["text", "image"],
+          cost: ZERO_COST,
+          contextWindow: entry.contextWindow,
+          maxTokens: entry.maxTokens,
+        }
+      );
+    }
+
+    if (entry?.provider === "google") {
+      return (
+        modelRuntime.getModel("google", entry.id) ?? {
+          id: entry.id,
+          name: `${entry.name} ${entry.version}`,
+          api: "google-generative-ai",
+          provider: "google",
+          baseUrl: GOOGLE_BASE_URL,
+          reasoning: false,
+          input: entry.supportsImages ? ["text", "image"] : ["text"],
+          cost: ZERO_COST,
+          contextWindow: entry.contextWindow,
+          maxTokens: entry.maxTokens,
+        }
+      );
+    }
+
+    if (entry?.provider === "xai") {
+      return (
+        modelRuntime.getModel("xai", entry.id) ??
+        modelRuntime.getModel("xai", XAI_FALLBACK_MODEL)
+      );
+    }
+
+    const available = await modelRuntime.getAvailable();
+    const found = available.find(
+      (m) => m.id === catalogId || `${m.provider}/${m.id}` === catalogId,
+    );
+    if (found?.provider === "nvidia") {
+      return { ...found, baseUrl: NVIDIA_BASE_URL || found.baseUrl };
+    }
+    return found;
   }
 
   private async ensureSession(): Promise<void> {
@@ -537,26 +1069,68 @@ export class AgentService {
     const agentDir = getPiAgentDir();
     const modelRuntime = await this.ensureRuntime();
 
-    // Prefer xai / grok-4.5; fallback to any available
-    let model =
-      modelRuntime.getModel(PREFERRED_PROVIDER, PREFERRED_MODEL) ??
-      modelRuntime.getModel("xai", "grok-4") ??
-      modelRuntime.getModel("xai", "grok-3");
+    // .env keys are no longer the only way in: a `pi auth login` (Anthropic
+    // subscription, xAI) is a working credential too, so warn only when there
+    // is no provider at all.
+    const providers = await readProviderStatus();
+    if (!providers.some((p) => p.connected)) {
+      console.error(
+        "[agent] no provider credentials — set BEIDE_GOOGLE_API_KEY / BEIDE_NVIDIA_API_KEY in .env or run `pi auth login`",
+      );
+      this.emit({
+        type: "beide:warning",
+        message:
+          "Нет доступных провайдеров. Укажите ключи в .env (BEIDE_GOOGLE_API_KEY, BEIDE_NVIDIA_API_KEY) или войдите через `pi auth login` и перезапустите IDE.",
+      });
+    }
+
+    if (!this.selectedModelId) {
+      this.selectedModelId = PREFERRED_MODEL;
+    }
+
+    const requestedModelId = this.selectedModelId;
+    let model = await this.resolveModel(modelRuntime, requestedModelId);
 
     if (!model) {
-      const available = await modelRuntime.getAvailable();
-      model = available[0];
+      console.warn(`[agent] model not found: ${requestedModelId}`);
+      model =
+        (await this.resolveModel(modelRuntime, PREFERRED_MODEL)) ??
+        (await this.resolveModel(modelRuntime, "deepseek-ai/deepseek-v4-pro")) ??
+        modelRuntime.getModel("xai", XAI_FALLBACK_MODEL);
+      // The picker silently snapped back to the fallback and looked like the
+      // choice had been ignored — say out loud that the pick was unavailable.
+      if (model) {
+        this.emit({
+          type: "beide:warning",
+          message: `Модель ${requestedModelId} недоступна (нет учётных данных провайдера или её нет в каталоге) — работаю на ${model.id}.`,
+        });
+      }
     }
 
     if (model) {
-      this.modelLabel = `${model.provider}/${model.id}`;
+      this.modelLabel =
+        model.provider === "xai" ? `xai/${model.id}` : model.id;
+      this.modelSupportsImages = Array.isArray(model.input) && model.input.includes("image");
+      console.log(
+        `[agent] request model=${JSON.stringify(model.id)} baseUrl=${model.baseUrl ?? ""} provider=${model.provider} images=${this.modelSupportsImages}`,
+      );
     } else {
       this.modelLabel = undefined;
+      this.modelSupportsImages = false;
+      console.warn("[agent] no model available");
     }
 
     const settingsManager = SettingsManager.inMemory({
       compaction: { enabled: true },
-      retry: { enabled: true },
+      retry: {
+        enabled: true,
+        provider: {
+          // NIM cold start can exceed default idle timeouts
+          timeoutMs: 180_000,
+          maxRetries: 2,
+        },
+      },
+      httpIdleTimeoutMs: 300_000,
     });
 
     const rules = await loadProjectRules(cwd);
@@ -656,15 +1230,14 @@ export class AgentService {
 
     const writeOps = {
       writeFile: async (absolutePath: string, content: string) => {
-        const pathLabel = rel(absolutePath);
+        const safePath = await resolveRealInWorkspace(cwd, toWorkspaceRelative(cwd, absolutePath));
+        const pathLabel = rel(safePath);
         let before = "";
         try {
-          before = await readFile(absolutePath, "utf-8");
+          before = await readFile(safePath, "utf-8");
         } catch {
           before = "";
         }
-
-        await checkpoints.snapshot([pathLabel], `write ${pathLabel}`);
 
         const decision = await permissions.request({
           kind: "write",
@@ -678,27 +1251,33 @@ export class AgentService {
           throw new Error(`Write denied by user: ${pathLabel}`);
         }
 
+        // After the grant: a denied write must not burn a checkpoint slot.
+        await checkpoints.snapshot([pathLabel], `write ${pathLabel}`);
+
         const finalContent = decision.content ?? content;
-        await mkdir(dirname(absolutePath), { recursive: true });
-        await writeFile(absolutePath, finalContent, "utf-8");
+        await mkdir(dirname(safePath), { recursive: true });
+        await writeFile(safePath, finalContent, "utf-8");
       },
       mkdir: async (dir: string) => {
-        await mkdir(dir, { recursive: true });
+        const safeDir = await resolveRealInWorkspace(cwd, toWorkspaceRelative(cwd, dir));
+        await mkdir(safeDir, { recursive: true });
       },
     };
 
     const editOps = {
-      readFile: async (absolutePath: string) => readFile(absolutePath),
+      readFile: async (absolutePath: string) => {
+        const safePath = await resolveRealInWorkspace(cwd, toWorkspaceRelative(cwd, absolutePath));
+        return readFile(safePath);
+      },
       writeFile: async (absolutePath: string, content: string) => {
-        const pathLabel = rel(absolutePath);
+        const safePath = await resolveRealInWorkspace(cwd, toWorkspaceRelative(cwd, absolutePath));
+        const pathLabel = rel(safePath);
         let before = "";
         try {
-          before = await readFile(absolutePath, "utf-8");
+          before = await readFile(safePath, "utf-8");
         } catch {
           before = "";
         }
-
-        await checkpoints.snapshot([pathLabel], `edit ${pathLabel}`);
 
         const decision = await permissions.request({
           kind: "edit",
@@ -712,11 +1291,40 @@ export class AgentService {
           throw new Error(`Edit denied by user: ${pathLabel}`);
         }
 
+        // After the grant: a denied edit must not burn a checkpoint slot.
+        await checkpoints.snapshot([pathLabel], `edit ${pathLabel}`);
+
         const finalContent = decision.content ?? content;
-        await writeFile(absolutePath, finalContent, "utf-8");
+        await writeFile(safePath, finalContent, "utf-8");
       },
       access: async (absolutePath: string) => {
-        await access(absolutePath);
+        const safePath = await resolveRealInWorkspace(cwd, toWorkspaceRelative(cwd, absolutePath));
+        await access(safePath);
+      },
+    };
+
+    // Default read operations hit the raw filesystem, so the tool could read any
+    // absolute path on the machine. Constrain it the same way write/edit are.
+    const readOps = {
+      readFile: async (absolutePath: string) => {
+        const safePath = await resolveRealInWorkspace(cwd, toWorkspaceRelative(cwd, absolutePath));
+        return readFile(safePath);
+      },
+      access: async (absolutePath: string) => {
+        const safePath = await resolveRealInWorkspace(cwd, toWorkspaceRelative(cwd, absolutePath));
+        await access(safePath);
+      },
+      detectImageMimeType: async (absolutePath: string) => {
+        const safePath = await resolveRealInWorkspace(cwd, toWorkspaceRelative(cwd, absolutePath));
+        const handle = await open(safePath, "r");
+        try {
+          // 32 bytes: enough for the RIFF/WEBP tag at 8 and the BMP DIB header at 14.
+          const head = Buffer.alloc(32);
+          const { bytesRead } = await handle.read(head, 0, 32, 0);
+          return sniffImageMimeType(head.subarray(0, bytesRead));
+        } finally {
+          await handle.close();
+        }
       },
     };
 
@@ -738,21 +1346,29 @@ export class AgentService {
           const firstToken = trimmed.split(/\s+/)[0]?.toLowerCase() ?? "";
           // Map cmd.exe builtins to their target command
           const cmd = firstToken.replace(/\.exe$/i, "");
+          // Package-manager binaries are deliberately absent: `npx <pkg>`,
+          // `npm run`, `bun x` and `deno run` all execute arbitrary code, which
+          // is exactly what plan mode exists to prevent. `awk` is out for the
+          // same reason (system()/print > file).
           const READONLY_COMMANDS = new Set([
             "ls", "dir", "cat", "type", "head", "tail", "less", "more",
             "grep", "rg", "findstr", "find", "where", "which", "echo",
             "pwd", "cd", "pushd", "popd", "tree",
             "git",  // git itself is allowed; mutating subcommands blocked below
-            "npm", "npx", "pnpm", "yarn", "bun", "deno",
-            "wc", "sort", "uniq", "cut", "awk",
+            "wc", "sort", "uniq", "cut",
           ]);
           // Subcommands that mutate — block even on otherwise-allowed binaries
           const MUTATING_SUBCOMMANDS = new Set([
             "install", "i", "add", "remove", "rm", "uninstall", "un",
-            "publish", "run", "exec", "execute",
+            "publish", "run", "exec", "execute", "explore",
             "commit", "push", "pull", "merge", "rebase", "cherry-pick",
             "reset", "clean", "checkout", "switch", "branch",
             "write", "delete", "del", "format",
+            "config", "tag", "stash", "notes",
+          ]);
+          const READONLY_GIT_SUBCOMMANDS = new Set([
+            "status", "diff", "show", "log", "rev-parse", "ls-files",
+            "ls-tree", "grep", "blame", "shortlog", "describe", "remote",
           ]);
           if (!READONLY_COMMANDS.has(cmd)) {
             const msg = Buffer.from(
@@ -763,9 +1379,67 @@ export class AgentService {
           }
           // Block mutating subcommands on allowed binaries
           const subcommand = trimmed.split(/\s+/)[1]?.replace(/^:/, "").toLowerCase() ?? "";
+          if (cmd === "git" && !READONLY_GIT_SUBCOMMANDS.has(subcommand)) {
+            const msg = Buffer.from(
+              `Blocked in plan mode: git subcommand "${subcommand || "(missing)"}" is not readonly.\n`,
+            );
+            options.onData(msg);
+            return { exitCode: 1 };
+          }
           if (MUTATING_SUBCOMMANDS.has(subcommand)) {
             const msg = Buffer.from(
               `Blocked in plan mode: "${firstToken} ${subcommand}" looks mutating. Switch to Agent mode.\n`,
+            );
+            options.onData(msg);
+            return { exitCode: 1 };
+          }
+          // Flags that make an otherwise-readonly binary write a file or run a
+          // program: `sort -o out`, `tree -o out`, `uniq in out`,
+          // `git log --output=f`, `git grep -O<pager>`, `rg --pre <cmd>`.
+          if (
+            (cmd === "sort" || cmd === "tree") &&
+            /(^|\s)(-o\b|--output(=|\b)|\/o\b)/i.test(trimmed)
+          ) {
+            options.onData(
+              Buffer.from(
+                `Blocked in plan mode: "${cmd}" with an output flag writes a file. Switch to Agent mode.\n`,
+              ),
+            );
+            return { exitCode: 1 };
+          }
+          if (cmd === "uniq" && /^\S+(?:\s+-\S+)*\s+[^-\s]\S*\s+[^-\s]\S*/.test(trimmed)) {
+            options.onData(
+              Buffer.from(
+                "Blocked in plan mode: uniq with a second positional argument writes a file. Switch to Agent mode.\n",
+              ),
+            );
+            return { exitCode: 1 };
+          }
+          if (cmd === "rg" && /(^|\s)(--pre\b|--hostname-bin\b)/.test(trimmed)) {
+            options.onData(
+              Buffer.from(
+                "Blocked in plan mode: rg --pre executes a program. Switch to Agent mode.\n",
+              ),
+            );
+            return { exitCode: 1 };
+          }
+          if (
+            cmd === "git" &&
+            /(^|\s)(--output(=|\b)|-O\S*|--open-files-in-pager(=|\b)|--exec-path(=|\b)|-c\b|--config-env(=|\b)|--upload-pack(=|\b)|--receive-pack(=|\b))/.test(
+              trimmed,
+            )
+          ) {
+            options.onData(
+              Buffer.from(
+                "Blocked in plan mode: git flag that writes a file or executes a program. Switch to Agent mode.\n",
+              ),
+            );
+            return { exitCode: 1 };
+          }
+          // A whitelist for only the first token is bypassable with a second shell command.
+          if (/[;&|\r\n]|`|\$\(/.test(command)) {
+            const msg = Buffer.from(
+              "Blocked in plan mode: command chaining is not allowed. Switch to Agent mode.\n",
             );
             options.onData(msg);
             return { exitCode: 1 };
@@ -778,9 +1452,28 @@ export class AgentService {
             options.onData(msg);
             return { exitCode: 1 };
           }
+          // Block pipes to shell interpreters — prevents command injection
+          if (/\|\s*(sh|bash|zsh|pwsh|powershell|cmd|python|node|npx)\b/i.test(command)) {
+            const msg = Buffer.from(
+              "Blocked in plan mode: pipe to shell interpreter detected. Switch to Agent mode.\n",
+            );
+            options.onData(msg);
+            return { exitCode: 1 };
+          }
+          // `find` is readonly only without its action flags.
+          if (cmd === "find" && /(^|\s)-(exec|execdir|ok|okdir|delete)\b/.test(command)) {
+            const msg = Buffer.from(
+              "Blocked in plan mode: find action flags (-exec/-delete) mutate. Switch to Agent mode.\n",
+            );
+            options.onData(msg);
+            return { exitCode: 1 };
+          }
         }
 
-        if (permissions.getMode() === "ask" && this.mode === "agent") {
+        // The gate is about the *permission* setting, not the agent mode. Plan
+        // mode used to skip it entirely, so every whitelisted command ran
+        // unannounced — the whitelist was the only thing standing in the way.
+        if (permissions.getMode() === "ask") {
           const decision = await permissions.request({
             kind: "bash",
             command,
@@ -792,7 +1485,12 @@ export class AgentService {
           }
         }
 
-        return localBash.exec(command, bashCwd, options);
+        // pi hands us `{...process.env}` here, so the model could just echo the
+        // provider keys back out of the shell it drives.
+        return localBash.exec(command, bashCwd, {
+          ...options,
+          env: stripSecretEnv(options.env ?? process.env),
+        });
       },
     };
 
@@ -895,8 +1593,8 @@ export class AgentService {
       }),
       async execute(_id, params) {
         const file = (params.file ?? "package.json").replace(/\\/g, "/");
-        const abs = join(cwd, file);
         try {
+          const abs = await resolveRealInWorkspace(cwd, file);
           const raw = await readFile(abs, "utf-8");
           const pkg = JSON.parse(raw) as Record<string, unknown>;
           const summary: Record<string, unknown> = {
@@ -1000,7 +1698,7 @@ export class AgentService {
     });
 
     return [
-      createReadToolDefinition(cwd),
+      createReadToolDefinition(cwd, { operations: readOps }),
       createWriteToolDefinition(cwd, { operations: writeOps }),
       createEditToolDefinition(cwd, { operations: editOps }),
       createBashToolDefinition(cwd, { operations: bashOps }),
@@ -1013,6 +1711,7 @@ export class AgentService {
   }
 
   private async teardownSession(): Promise<void> {
+    this.flushStreamBuffer();
     this.permissions.cancelAll("workspace change");
     if (this.unsubscribe) {
       this.unsubscribe();
@@ -1041,6 +1740,38 @@ export class AgentService {
 }
 
 /**
+ * The main process env carries provider credentials (loaded from .env). A child
+ * shell the model can drive must not be able to echo them back, so anything
+ * that looks like a credential is stripped before spawn.
+ */
+const SECRET_ENV_KEYS = new Set([
+  "BEIDE_GOOGLE_API_KEY",
+  "BEIDE_NVIDIA_API_KEY",
+  "BEIDE_ADMIN_EMAIL",
+  "BEIDE_ADMIN_PASSWORD",
+  "GEMINI_API_KEY",
+  "NVIDIA_API_KEY",
+  "SUPABASE_SERVICE_ROLE_KEY",
+]);
+const SECRET_ENV_RE = /_API_KEY$|_KEY$|TOKEN|SECRET|PASSWORD|PASSWD/i;
+
+function stripSecretEnv(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...source };
+  for (const key of Object.keys(env)) {
+    if (SECRET_ENV_KEYS.has(key) || SECRET_ENV_RE.test(key)) delete env[key];
+  }
+  return env;
+}
+
+function buildChildEnv(): NodeJS.ProcessEnv {
+  return stripSecretEnv({
+    ...process.env,
+    PYTHONIOENCODING: "utf-8",
+    PYTHONUTF8: "1",
+  });
+}
+
+/**
  * Simple shell runner for terminal MVP (no node-pty).
  * Runs in workspace cwd with a 30s timeout.
  */
@@ -1063,12 +1794,11 @@ export function runShellCommand(
       isWin ? ["/d", "/s", "/c", wrapped] : ["-c", wrapped],
       {
         cwd,
-        env: {
-          ...process.env,
-          PYTHONIOENCODING: "utf-8",
-          PYTHONUTF8: "1",
-        },
+        env: buildChildEnv(),
         windowsHide: true,
+        // POSIX killTree signals -pid, which only reaches the tree when the
+        // child leads its own process group.
+        detached: !isWin,
       },
     );
 
@@ -1078,13 +1808,19 @@ export function runShellCommand(
     let stderrTruncated = false;
     const MAX = 1_000_000;
     let settled = false;
+    let timedOut = false;
 
     const finish = (code: number) => {
       if (settled) return;
       settled = true;
+      // The kill usually makes 'close' fire before killTree() resolves, so the
+      // timeout has to be reported from the flag, not from the losing branch.
+      if (timedOut) {
+        stderr += `\n[beide] command timed out after ${Math.round(timeoutMs / 1000)}s`;
+      }
       if (stdoutTruncated) stdout += `\n[beide] stdout truncated to last 1MB`;
       if (stderrTruncated) stderr += `\n[beide] stderr truncated to last 1MB`;
-      resolve({ code, stdout, stderr });
+      resolve({ code: timedOut ? 124 : code, stdout, stderr });
     };
 
     const killTree = (): Promise<void> => {
@@ -1124,10 +1860,8 @@ export function runShellCommand(
     };
 
     const timer = setTimeout(() => {
-      void killTree().then(() => {
-        stderr += "\n[beide] command timed out after 30s";
-        finish(124);
-      });
+      timedOut = true;
+      void killTree().then(() => finish(124));
     }, timeoutMs);
 
     child.stdout?.on("data", (d: Buffer) => {

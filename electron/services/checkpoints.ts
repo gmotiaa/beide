@@ -1,7 +1,7 @@
-import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename as fsRename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { CheckpointInfo } from "../../src/lib/types";
-import { getCheckpointsDir, resolveInWorkspace, toWorkspaceRelative } from "./paths";
+import { getCheckpointsDir, resolveRealInWorkspace, toWorkspaceRelative } from "./paths";
 
 interface CheckpointMeta {
   id: string;
@@ -10,12 +10,28 @@ interface CheckpointMeta {
   files: string[];
 }
 
+interface CheckpointEntryPayload {
+  path: string;
+  existed: boolean;
+  content: string;
+  encoding?: "utf-8" | "base64";
+}
+
 const ID_RE = /^[a-z0-9_-]+$/i;
 
 function assertSafeId(id: string): void {
   if (!ID_RE.test(id)) {
     throw new Error(`Invalid checkpoint id: ${id}`);
   }
+}
+
+/**
+ * Always index-based: a workspace file literally named `entry_0001.json` would
+ * otherwise collide with the generated name of another entry. The real relative
+ * path is carried inside the payload.
+ */
+function payloadName(index: number): string {
+  return `entry_${index.toString().padStart(4, "0")}.json`;
 }
 
 export class CheckpointService {
@@ -42,37 +58,55 @@ export class CheckpointService {
   async snapshot(paths: string[], label = "agent edit"): Promise<string> {
     const root = this.requireRoot();
     const id = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    const base = join(this.dir(), id);
-    await mkdir(base, { recursive: true });
+    const checkpointsDir = this.dir();
+    const stagingBase = join(checkpointsDir, `.staging_${id}`);
+    const finalBase = join(checkpointsDir, id);
+
+    await mkdir(stagingBase, { recursive: true });
 
     const saved: string[] = [];
     const unique = [...new Set(paths.filter(Boolean))];
 
-    for (const p of unique) {
+    for (const [index, p] of unique.entries()) {
       let absolute: string;
       let rel: string;
       try {
-        // Accept workspace-relative or absolute-under-workspace paths
         const looksAbsolute = /^[a-zA-Z]:[\\/]/.test(p) || p.startsWith("/") || p.startsWith("\\");
         rel = looksAbsolute ? toWorkspaceRelative(root, p) : p.replace(/\\/g, "/");
-        absolute = resolveInWorkspace(root, rel);
+        absolute = await resolveRealInWorkspace(root, rel);
       } catch {
         continue;
       }
 
-      let content: string | null = null;
+      let buf: Buffer | null = null;
       try {
-        content = await readFile(absolute, "utf-8");
+        buf = await readFile(absolute);
       } catch {
-        content = null; // new file
+        buf = null; // new file
       }
 
-      const safeName = rel.replace(/[\\/]/g, "__");
-      const copyPath = join(base, safeName);
-      const payload = {
+      const safeName = payloadName(index);
+      const copyPath = join(stagingBase, safeName);
+
+      let content = "";
+      let encoding: "utf-8" | "base64" = "utf-8";
+
+      if (buf !== null) {
+        const isBinary = buf.includes(0);
+        if (isBinary) {
+          content = buf.toString("base64");
+          encoding = "base64";
+        } else {
+          content = buf.toString("utf-8");
+          encoding = "utf-8";
+        }
+      }
+
+      const payload: CheckpointEntryPayload = {
         path: rel,
-        existed: content !== null,
-        content: content ?? "",
+        existed: buf !== null,
+        content,
+        encoding,
       };
       await writeFile(copyPath, JSON.stringify(payload), "utf-8");
       saved.push(rel);
@@ -84,7 +118,20 @@ export class CheckpointService {
       label,
       files: saved,
     };
-    await writeFile(join(base, "meta.json"), JSON.stringify(meta, null, 2), "utf-8");
+    await writeFile(join(stagingBase, "meta.json"), JSON.stringify(meta, null, 2), "utf-8");
+
+    try {
+      await fsRename(stagingBase, finalBase);
+    } catch {
+      await mkdir(finalBase, { recursive: true });
+      const entries = await readdir(stagingBase);
+      for (const entry of entries) {
+        const raw = await readFile(join(stagingBase, entry));
+        await writeFile(join(finalBase, entry), raw);
+      }
+      await rm(stagingBase, { recursive: true, force: true });
+    }
+
     void this.pruneOld(40);
     return id;
   }
@@ -92,10 +139,23 @@ export class CheckpointService {
   /** Keep only the newest N checkpoints to bound disk use. */
   private async pruneOld(keep = 40): Promise<void> {
     try {
+      // Orphaned staging dirs left by a crash mid-snapshot/mid-restore. Their
+      // names embed the creation timestamp; list() hides dot-dirs, so without
+      // this they accumulated forever. An hour of grace keeps any live
+      // concurrent snapshot/restore safe.
+      const names = await readdir(this.dir());
+      const cutoff = Date.now() - 3_600_000;
+      for (const name of names) {
+        const m = /^\.(?:staging|tmp_prerestore)_(\d+)/.exec(name);
+        if (m && Number(m[1]) < cutoff) {
+          await rm(join(this.dir(), name), { recursive: true, force: true });
+        }
+      }
       const list = await this.list();
       if (list.length <= keep) return;
       for (const cp of list.slice(keep)) {
         try {
+          assertSafeId(cp.id);
           await rm(join(this.dir(), cp.id), { recursive: true, force: true });
         } catch {
           /* ignore */
@@ -118,11 +178,14 @@ export class CheckpointService {
 
     const out: CheckpointInfo[] = [];
     for (const name of names) {
+      if (name.startsWith(".")) continue;
       try {
+        assertSafeId(name);
         const raw = await readFile(join(base, name, "meta.json"), "utf-8");
         const meta = JSON.parse(raw) as CheckpointMeta;
+        if (meta.id !== name) continue;
         out.push({
-          id: meta.id,
+          id: name,
           createdAt: meta.createdAt,
           label: meta.label,
           files: meta.files ?? [],
@@ -142,6 +205,32 @@ export class CheckpointService {
     return this.restoreChain;
   }
 
+  private async restoreFromDir(dirPath: string): Promise<void> {
+    const root = this.requireRoot();
+    const entries = await readdir(dirPath);
+    for (const entry of entries) {
+      if (entry === "meta.json") continue;
+      try {
+        const payload = JSON.parse(
+          await readFile(join(dirPath, entry), "utf-8"),
+        ) as CheckpointEntryPayload;
+        const absolute = await resolveRealInWorkspace(root, payload.path);
+        if (!payload.existed) {
+          await rm(absolute, { force: true });
+        } else {
+          await mkdir(dirname(absolute), { recursive: true });
+          const data =
+            payload.encoding === "base64"
+              ? Buffer.from(payload.content, "base64")
+              : payload.content;
+          await writeFile(absolute, data);
+        }
+      } catch {
+        // skip entry restore failure in helper
+      }
+    }
+  }
+
   private async restoreImpl(id: string): Promise<void> {
     const root = this.requireRoot();
     assertSafeId(id);
@@ -150,25 +239,90 @@ export class CheckpointService {
     const meta = JSON.parse(raw) as CheckpointMeta;
 
     const entries = await readdir(base);
+    const targetPayloads: CheckpointEntryPayload[] = [];
+    const targetPaths: string[] = [];
+
     for (const entry of entries) {
       if (entry === "meta.json") continue;
       try {
-        const payload = JSON.parse(await readFile(join(base, entry), "utf-8")) as {
-          path: string;
-          existed: boolean;
-          content: string;
-        };
-        const absolute = resolveInWorkspace(root, payload.path);
+        const payload = JSON.parse(
+          await readFile(join(base, entry), "utf-8"),
+        ) as CheckpointEntryPayload;
+        targetPayloads.push(payload);
+        targetPaths.push(payload.path);
+      } catch {
+        /* ignore invalid entry */
+      }
+    }
+
+    // Phase 1: Create Pre-Restore Staging Snapshot
+    const tmpId = `.tmp_prerestore_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const tmpStagingDir = join(this.dir(), tmpId);
+    await mkdir(tmpStagingDir, { recursive: true });
+
+    for (const [index, rel] of targetPaths.entries()) {
+      let absolute: string;
+      try {
+        absolute = await resolveRealInWorkspace(root, rel);
+      } catch {
+        continue;
+      }
+      let buf: Buffer | null = null;
+      try {
+        buf = await readFile(absolute);
+      } catch {
+        buf = null;
+      }
+      const safeName = payloadName(index);
+      const copyPath = join(tmpStagingDir, safeName);
+      let content = "";
+      let encoding: "utf-8" | "base64" = "utf-8";
+      if (buf !== null) {
+        if (buf.includes(0)) {
+          content = buf.toString("base64");
+          encoding = "base64";
+        } else {
+          content = buf.toString("utf-8");
+          encoding = "utf-8";
+        }
+      }
+      const p: CheckpointEntryPayload = {
+        path: rel,
+        existed: buf !== null,
+        content,
+        encoding,
+      };
+      await writeFile(copyPath, JSON.stringify(p), "utf-8");
+    }
+
+    // Phase 2: Transactional Restore Execution
+    try {
+      for (const payload of targetPayloads) {
+        const absolute = await resolveRealInWorkspace(root, payload.path);
         if (!payload.existed) {
           await rm(absolute, { force: true });
         } else {
           await mkdir(dirname(absolute), { recursive: true });
-          await writeFile(absolute, payload.content, "utf-8");
+          const data =
+            payload.encoding === "base64"
+              ? Buffer.from(payload.content, "base64")
+              : payload.content;
+          await writeFile(absolute, data);
         }
-      } catch {
-        // skip
       }
+    } catch (restoreError) {
+      // Automatic rollback on failure
+      console.error(
+        `[CheckpointService] Restore failed for checkpoint ${id}. Rolling back to pre-restore state.`,
+        restoreError,
+      );
+      await this.restoreFromDir(tmpStagingDir);
+      await rm(tmpStagingDir, { recursive: true, force: true });
+      throw restoreError;
     }
+
+    // Cleanup pre-restore staging snapshot after success
+    await rm(tmpStagingDir, { recursive: true, force: true });
 
     // Touch meta for consumers
     void meta;

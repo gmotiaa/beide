@@ -26,6 +26,17 @@ export class PermissionGateway {
     this.mainWindow = win;
   }
 
+  /** `webContents.send` throws once the window is destroyed. */
+  private post(channel: string, payload: unknown): void {
+    const win = this.mainWindow;
+    if (!win || win.isDestroyed()) return;
+    try {
+      win.webContents.send(channel, payload);
+    } catch {
+      // renderer torn down between the check and the send
+    }
+  }
+
   setMode(mode: PermissionMode): void {
     this.mode = mode;
   }
@@ -50,6 +61,13 @@ export class PermissionGateway {
       return { allow: true, content: input.after };
     }
 
+    // Nobody can answer without a live renderer. Deny straight away instead of
+    // parking the agent's tool call on a 10-minute timer.
+    const win = this.mainWindow;
+    if (!win || win.isDestroyed()) {
+      return { allow: false };
+    }
+
     const id = `perm_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
     let diff: string | undefined;
     if (input.path && input.after !== undefined) {
@@ -69,7 +87,7 @@ export class PermissionGateway {
     return new Promise<{ allow: boolean; content?: string }>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        this.mainWindow?.webContents.send("agent:event", {
+        this.post("agent:event", {
           type: "beide:permission_timeout",
           id,
           description: input.description,
@@ -78,7 +96,7 @@ export class PermissionGateway {
       }, PERMISSION_TIMEOUT_MS);
 
       this.pending.set(id, { resolve, reject, request, timer });
-      this.mainWindow?.webContents.send("agent:permission", request);
+      this.post("agent:permission", request);
     });
   }
 

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { ChatStatus, UIMessage } from "ai";
 import {
   IconBulb,
@@ -7,18 +8,19 @@ import {
   IconPlus,
   IconRobot,
   IconSearch,
-  IconSparkles,
 } from "@tabler/icons-react";
 
 import { MessageList } from "../agent-elements/message-list";
 import { InputBar } from "../agent-elements/input-bar";
 import { ModeSelector } from "../agent-elements/input/mode-selector";
+import { ModelPicker } from "../agent-elements/input/model-picker";
 import { Suggestions, type SuggestionItem } from "../agent-elements/input/suggestions";
-import { ErrorMessage } from "../agent-elements/error-message";
 import { TextShimmer } from "../agent-elements/text-shimmer";
+
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
-import { Separator } from "../ui/separator";
+import { Kbd, KbdGroup } from "../ui/kbd";
+import { Icons } from "../common/IconButton";
 import {
   Tooltip,
   TooltipContent,
@@ -29,46 +31,16 @@ import { ChatHistory } from "./ChatHistory";
 
 import { useAgentStore } from "../../stores/agent";
 import { useChatStore } from "../../stores/chat";
+import { useWorkspaceStore } from "../../stores/workspace";
 import { toUIMessages } from "../../lib/to-ui-messages";
+import {
+  DEFAULT_MODEL_ID,
+  MODEL_CATALOG,
+  MODEL_OPTIONS,
+  findModel,
+} from "../../lib/models";
 import type { AgentMode, ChatImage } from "../../lib/types";
 import { cn } from "../../lib/utils";
-
-const MODES = [
-  {
-    id: "agent",
-    label: "Агент",
-    icon: IconRobot,
-    description: "Читать, править, bash",
-  },
-  {
-    id: "plan",
-    label: "План",
-    icon: IconBulb,
-    description: "Только план, без правок",
-  },
-];
-
-/** Подсказки только над инпутом, когда лента пуста */
-const SUGGESTIONS_RU: SuggestionItem[] = [
-  {
-    id: "map",
-    label: "Карта проекта",
-    value: "Покажи структуру проекта: ключевые модули и точки входа.",
-    icon: <IconFolder className="h-3.5 w-3.5" aria-hidden />,
-  },
-  {
-    id: "risks",
-    label: "Найти риски",
-    value: "Найди рискованные места и баги. Отсортируй по серьёзности.",
-    icon: <IconSearch className="h-3.5 w-3.5" aria-hidden />,
-  },
-  {
-    id: "code",
-    label: "Разобрать код",
-    value: "Прочитай открытый файл и кратко опиши назначение и проблемы.",
-    icon: <IconCode className="h-3.5 w-3.5" aria-hidden />,
-  },
-];
 
 function fileToChatImage(file: File): Promise<ChatImage | null> {
   return new Promise((resolve) => {
@@ -92,17 +64,26 @@ function fileToChatImage(file: File): Promise<ChatImage | null> {
   });
 }
 
-function modelShortName(model?: string): string | null {
+/**
+ * The header used to slice the raw id at the "/" — so it read "minimax-m3"
+ * while the ModelPicker two rows below said "MiniMax M3" for the same model.
+ * `findModel` is the catalog's own resolver and tolerates a `provider/` prefix.
+ */
+function modelLabelFor(model?: string): string | null {
   if (!model) return null;
-  return model.includes("/") ? (model.split("/").pop() ?? model) : model;
+  const found = findModel(model);
+  return found ? `${found.name} ${found.version}` : model;
 }
 
 export function ChatPanel() {
+  const { t } = useTranslation();
   const mode = useAgentStore((s) => s.mode);
   const setMode = useAgentStore((s) => s.setMode);
   const streaming = useAgentStore((s) => s.streaming);
   const ready = useAgentStore((s) => s.ready);
   const model = useAgentStore((s) => s.model);
+  const setModel = useAgentStore((s) => s.setModel);
+  const providers = useAgentStore((s) => s.providers);
   const send = useAgentStore((s) => s.send);
   const abort = useAgentStore((s) => s.abort);
 
@@ -116,16 +97,88 @@ export function ChatPanel() {
   const newSession = useChatStore((s) => s.newSession);
   const setError = useChatStore((s) => s.setError);
   const refreshSessions = useChatStore((s) => s.refreshSessions);
+  const restoreActiveSession = useChatStore((s) => s.restoreActiveSession);
+  const openFolder = useWorkspaceStore((s) => s.openFolder);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragOver, setIsDragOver] = useState(false);
+
+  const modes = useMemo(
+    () => [
+      {
+        id: "agent",
+        label: t("chat.agent"),
+        icon: IconRobot,
+        description: t("chat.agentHint"),
+      },
+      {
+        id: "plan",
+        label: t("chat.plan"),
+        icon: IconBulb,
+        description: t("chat.planHint"),
+      },
+    ],
+    [t],
+  );
+
+  const suggestionItems = useMemo<SuggestionItem[]>(
+    () => [
+      {
+        id: "map",
+        label: t("chat.suggestions.map.label"),
+        value: t("chat.suggestions.map.value"),
+        icon: <IconFolder className="h-3.5 w-3.5" aria-hidden />,
+      },
+      {
+        id: "risks",
+        label: t("chat.suggestions.risks.label"),
+        value: t("chat.suggestions.risks.value"),
+        icon: <IconSearch className="h-3.5 w-3.5" aria-hidden />,
+      },
+      {
+        id: "code",
+        label: t("chat.suggestions.code.label"),
+        value: t("chat.suggestions.code.value"),
+        icon: <IconCode className="h-3.5 w-3.5" aria-hidden />,
+      },
+    ],
+    [t],
+  );
 
   useEffect(() => {
     void refreshSessions();
   }, [refreshSessions, ready]);
 
+  // The transcript lives in memory only. A renderer reload — HMR in dev, a
+  // crash, a restart — used to wipe it while the agent kept streaming, so the
+  // prompt and the tool cards vanished and the tail of the answer opened a new
+  // orphan session. Pick the conversation back up from the one main is on.
+  useEffect(() => {
+    void restoreActiveSession();
+  }, [restoreActiveSession, ready]);
+
   const uiMessages = useMemo(() => toUIMessages(messages), [messages]);
-  const modelLabel = modelShortName(model);
+  const modelLabel = modelLabelFor(model);
+
+  /**
+   * Offering a model whose provider holds no credentials only buys a failed
+   * request three steps later — Claude is listed once `pi auth login` (or an
+   * API key) is in place, and hidden otherwise. Until the status arrives, or
+   * if nothing at all is connected, the full catalog stays visible so the
+   * picker never renders empty.
+   */
+  const modelOptions = useMemo(() => {
+    if (!providers.length) return MODEL_OPTIONS;
+    const connected = new Set(
+      providers.filter((p) => p.connected).map((p) => p.id),
+    );
+    const current = findModel(model ?? "");
+    const allowed = MODEL_CATALOG.filter(
+      (m) => connected.has(m.provider) || m.id === current?.id,
+    );
+    if (!allowed.length) return MODEL_OPTIONS;
+    return allowed.map(({ id, name, version }) => ({ id, name, version }));
+  }, [providers, model]);
 
   const status: ChatStatus = streaming
     ? "streaming"
@@ -143,28 +196,28 @@ export function ChatPanel() {
         parts: [
           {
             type: "error",
-            title: "Ошибка запроса",
+            title: t("chat.requestError"),
             message: error,
           } as unknown as UIMessage["parts"][number],
         ],
       },
     ];
-  }, [uiMessages, error]);
+  }, [uiMessages, error, t]);
 
   const attachedImages = useMemo(
     () =>
       images.map((img, i) => ({
         id: `img-${i}`,
-        filename: img.name ?? `изображение-${i + 1}`,
+        filename: img.name ?? t("chat.imageName", { n: i + 1 }),
         url: `data:${img.mimeType};base64,${img.data}`,
       })),
-    [images],
+    [images, t],
   );
 
   const onSend = useCallback(
     ({ content }: { role?: string; content: string }) => {
       if (!ready) {
-        setError("Сначала откройте папку проекта");
+        setError(t("chat.openProjectFirst"));
         return;
       }
       const text = (content ?? "").trim();
@@ -172,12 +225,17 @@ export function ChatPanel() {
       void send(text);
       setDraft("");
     },
-    [ready, send, setError, setDraft, images.length],
+    [ready, send, setError, setDraft, images.length, t],
   );
 
   const onStop = useCallback(() => {
     void abort();
   }, [abort]);
+
+  // Half the catalog is text-only. The attach button used to be offered for
+  // every model, so an image staged against e.g. Nemotron was only rejected
+  // once the request reached the provider.
+  const supportsImages = findModel(model ?? "")?.supportsImages ?? false;
 
   const onAttach = useCallback(() => {
     fileInputRef.current?.click();
@@ -185,20 +243,20 @@ export function ChatPanel() {
 
   const onFilesPicked = useCallback(
     async (list: FileList | null) => {
-      if (!list) return;
+      if (!list || !supportsImages) return;
       for (const file of Array.from(list)) {
         const img = await fileToChatImage(file);
         if (img) addImage(img);
       }
       if (fileInputRef.current) fileInputRef.current.value = "";
     },
-    [addImage],
+    [addImage, supportsImages],
   );
 
   const onPaste = useCallback(
     (e: React.ClipboardEvent) => {
       const items = e.clipboardData?.items;
-      if (!items) return;
+      if (!items || !supportsImages) return;
       for (const item of Array.from(items)) {
         if (item.type.startsWith("image/")) {
           e.preventDefault();
@@ -209,31 +267,60 @@ export function ChatPanel() {
         }
       }
     },
-    [addImage],
+    [addImage, supportsImages],
   );
 
+  // The chips belong to the empty state, not to the composer: docked under the
+  // input they crowd the footer and read as a toolbar. Placed here they are
+  // what the panel offers while there is nothing to read — the same placement
+  // AgentChat calls `emptySuggestionsPlacement="empty"`.
   const onSuggestion = useCallback(
     (item: SuggestionItem) => {
-      const value = item.value ?? item.label;
-      setDraft(value);
+      setDraft(item.value ?? item.label);
+      requestAnimationFrame(() => {
+        const el = document.getElementById("chat-composer");
+        if (!(el instanceof HTMLTextAreaElement)) return;
+        el.focus();
+        const end = el.value.length;
+        el.setSelectionRange(end, end);
+      });
     },
     [setDraft],
   );
 
-  const showInlineSuggestions = messages.length === 0 && !streaming;
+  // The composer is the natural home for "you have no project open": it sits
+  // next to the control that fixes it. `infoBar` is the slot the library
+  // provides for exactly this.
+  const infoBar = useMemo(
+    () =>
+      ready
+        ? undefined
+        : {
+            title: t("chat.noProjectTitle"),
+            description: t("chat.noProjectBody"),
+            action: {
+              label: t("chat.noProjectAction"),
+              onClick: () => void openFolder(),
+            },
+          },
+    [ready, openFolder, t],
+  );
 
   return (
     <TooltipProvider delay={200}>
       <aside
         className={cn(
-          "chat-panel chat-panel--ae",
-          isDragOver && "chat-panel--drag",
+          // Surface treatment (radius, ring, elevation) comes from shell.css so
+          // every panel in the shell stays consistent.
+          "chat-panel chat-panel--ae relative flex flex-col transition-colors duration-200",
+          isDragOver && "chat-panel--drag ring-2 ring-accent/60",
         )}
         data-mode={mode}
         data-streaming={streaming ? "1" : "0"}
         data-ready={ready ? "1" : "0"}
-        aria-label="Чат агента"
+        aria-label={t("chat.ariaLabel")}
         onDragOver={(e) => {
+          if (!supportsImages) return;
           e.preventDefault();
           setIsDragOver(true);
         }}
@@ -244,23 +331,23 @@ export function ChatPanel() {
           void onFilesPicked(e.dataTransfer.files);
         }}
       >
-        <div className="chat-panel__header">
-          <div className="chat-panel__title-row">
+        <div className="chat-panel__header sticky top-0 z-10 flex items-center justify-between px-3 py-2">
+          <div className="chat-panel__title-row flex items-center gap-2">
             <span
               className={cn(
-                "chat-panel__status-dot",
+                "chat-panel__status-dot transition-all duration-300",
                 ready ? "is-ready" : "is-idle",
-                streaming && "is-live",
+                streaming && "is-live scale-110",
               )}
               aria-hidden
             />
-            <span className="chat-panel__title">
-              {mode === "plan" ? "План" : "Агент"}
+            <span className="chat-panel__title font-semibold tracking-tight">
+              {mode === "plan" ? t("chat.plan") : t("chat.agent")}
             </span>
             {modelLabel && (
               <Badge
                 variant="outline"
-                className="chat-panel__model-badge max-w-[9rem] truncate font-mono text-[10.5px] font-normal"
+                className="chat-panel__model-badge truncate text-[10.5px] font-normal"
                 title={model}
               >
                 {modelLabel}
@@ -269,17 +356,17 @@ export function ChatPanel() {
             {streaming && (
               <Badge
                 variant="secondary"
-                className="chat-panel__live-badge gap-1 border-transparent px-2 font-normal"
+                className="chat-panel__live-badge gap-1.5 border-accent/40 px-2.5 font-normal"
               >
-                <span className="size-1.5 animate-pulse rounded-full bg-primary" />
-                <TextShimmer as="span" duration={1.2} spread={60}>
-                  работает
+                <span className="size-1.5 animate-pulse rounded-full bg-accent" />
+                <TextShimmer as="span" duration={1.2} spread={60} className="text-accent-foreground font-medium">
+                  {t("chat.streaming")}
                 </TextShimmer>
               </Badge>
             )}
           </div>
 
-          <div className="chat-panel__header-actions">
+          <div className="chat-panel__header-actions flex items-center gap-1">
             <ChatHistory />
             <Tooltip>
               <TooltipTrigger
@@ -288,8 +375,8 @@ export function ChatPanel() {
                     type="button"
                     variant="ghost"
                     size="icon-sm"
-                    className="chat-panel__new"
-                    aria-label="Новый чат"
+                    className="chat-panel__new hover:bg-accent/20 active:scale-95 transition-transform"
+                    aria-label={t("chat.newSession")}
                     onClick={() => {
                       void newSession();
                       setError(null);
@@ -299,30 +386,41 @@ export function ChatPanel() {
                   </Button>
                 }
               />
-              <TooltipContent side="bottom">Новый чат</TooltipContent>
+              <TooltipContent side="bottom">{t("chat.newSession")}</TooltipContent>
             </Tooltip>
           </div>
         </div>
 
-        <Separator className="opacity-60" />
-
-        <div className="chat-panel__body">
-          <div className="chat-panel__scroll">
+        {/* The header already draws its own hairline; a Separator here
+            stacked a second one on top of it. */}
+        <div className="chat-panel__body flex flex-1 flex-col overflow-hidden">
+          <div className="chat-panel__scroll scrollbar-custom flex-1 overflow-y-auto px-1 py-2">
             {messages.length === 0 && !error ? (
-              <div className="chat-panel__empty">
-                <div className="chat-panel__empty-icon" aria-hidden>
-                  <IconSparkles className="size-5" stroke={1.5} />
+              <div className="chat-panel__empty flex flex-col items-center justify-center text-center p-6 my-auto">
+                <div className="chat-panel__empty-icon mb-3" aria-hidden>
+                  {Icons.chat}
                 </div>
-                <div className="chat-panel__empty-title">beide</div>
-                <p className="chat-panel__empty-body">
-                  {ready
-                    ? "Опишите задачу — агент сам читает файлы проекта и вносит правки."
-                    : "Откройте папку проекта, чтобы начать работу с агентом."}
+                <div className="chat-panel__empty-title">{t("chat.emptyTitle")}</div>
+                <p className="chat-panel__empty-body mt-1 leading-relaxed max-w-xs">
+                  {t("chat.emptyBody")}
                 </p>
-                {!ready && (
-                  <Badge variant="outline" className="mt-1 font-normal">
-                    workspace не открыт
-                  </Badge>
+                {ready && (
+                  <Suggestions
+                    items={suggestionItems}
+                    onSelect={onSuggestion}
+                    disabled={streaming}
+                    className="chat-panel__suggestions"
+                    itemClassName="chat-panel__suggestion"
+                  />
+                )}
+                {/* The "no project" case is handled by the composer's infoBar,
+                    which sits next to the button that resolves it. */}
+                {ready && (
+                  <KbdGroup className="chat-panel__empty-keys">
+                    <Kbd>Ctrl</Kbd>
+                    <Kbd>L</Kbd>
+                    <span className="chat-panel__empty-keys-hint">{t("chat.focusHint")}</span>
+                  </KbdGroup>
                 )}
               </div>
             ) : (
@@ -334,25 +432,12 @@ export function ChatPanel() {
                 className="chat-panel__messages"
               />
             )}
-
-            {error && messages.length === 0 && (
-              <div className="px-3 pb-2">
-                <ErrorMessage title="Ошибка" message={error} />
-              </div>
-            )}
+            {/* MessageList renders the error part appended to listMessages, so
+                the standalone ErrorMessage that used to sit here showed the
+                same error a second time whenever the transcript was empty. */}
           </div>
 
-          <div className="chat-panel__composer">
-            {showInlineSuggestions && (
-              <Suggestions
-                items={SUGGESTIONS_RU}
-                onSelect={onSuggestion}
-                disabled={!ready || streaming}
-                className="chat-panel__suggestions"
-                itemClassName="h-8 rounded-lg px-3 text-sm"
-              />
-            )}
-
+          <div className="chat-panel__composer glow-border-focus relative">
             <InputBar
               onSend={onSend}
               status={status}
@@ -360,12 +445,10 @@ export function ChatPanel() {
               value={draft}
               onChange={setDraft}
               placeholder={
-                ready
-                  ? "Сообщение агенту beide…"
-                  : "Сначала откройте папку проекта"
+                ready ? t("chat.placeholder") : t("chat.openProjectFirst")
               }
               disabled={!ready}
-              onAttach={onAttach}
+              onAttach={supportsImages ? onAttach : undefined}
               attachedImages={attachedImages}
               onRemoveImage={(id) => {
                 const idx = Number(String(id).replace("img-", ""));
@@ -374,28 +457,43 @@ export function ChatPanel() {
               onPaste={onPaste}
               isDragOver={isDragOver}
               enableImagePreview
+              // AppLayout's Ctrl+L handler focuses #chat-composer; nothing in
+              // the tree carried that id, so the shortcut opened the panel and
+              // then dropped the focus.
+              textareaId="chat-composer"
+              infoBar={infoBar}
               leftActions={
-                <ModeSelector
-                  modes={MODES}
-                  value={mode}
-                  onChange={(id) => void setMode(id as AgentMode)}
-                />
+                <div className="flex items-center gap-1.5">
+                  <ModeSelector
+                    modes={modes}
+                    value={mode}
+                    onChange={(id) => void setMode(id as AgentMode)}
+                  />
+                  <ModelPicker
+                    models={modelOptions}
+                    value={model || DEFAULT_MODEL_ID}
+                    onChange={(selectedId) => void setModel(selectedId)}
+                  />
+                </div>
               }
               className="beide-agent-input"
             />
           </div>
         </div>
 
+        {/* Border, surface and type come from .chat-panel__footer in shell.css —
+            the utilities that used to be here painted a second, conflicting
+            background that the stylesheet then overrode anyway. */}
         <div className="chat-panel__footer">
           <Badge
             variant="outline"
-            className="chat-panel__ai-badge h-[18px] min-w-7 rounded-[5px] px-1.5 text-[10px] font-bold tracking-wider uppercase"
-            title="AI-агент beide"
+            className="chat-panel__ai-badge"
+            title={t("chat.aiBadgeTitle")}
           >
             AI
           </Badge>
-          <span className="chat-panel__footer-hint">
-            первая белорусская ide с агентом
+          <span className="chat-panel__footer-hint truncate">
+            {t("chat.footerTagline")}
           </span>
         </div>
 

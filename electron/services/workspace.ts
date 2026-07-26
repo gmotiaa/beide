@@ -10,20 +10,27 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { watch, type FSWatcher } from "node:fs";
-import { basename, dirname, join, relative, sep } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 import type { FileNode } from "../../src/lib/types";
 import {
+  GitIgnoreMatcher,
   resolveInWorkspace,
+  resolveRealInWorkspace,
   shouldSkipDir,
   SKIP_DIR_NAMES,
   toWorkspaceRelative,
 } from "./paths";
 
+const CACHE_TTL_MS = 5_000;
+
 export class WorkspaceService {
   private rootPath: string | null = null;
   private watcher: FSWatcher | null = null;
   private watchTimer: ReturnType<typeof setTimeout> | null = null;
+  private pendingWatchPaths = new Set<string>();
   private mainWindow: BrowserWindow | null = null;
+  private gitIgnoreMatcher: GitIgnoreMatcher | null = null;
+  private dirCache = new Map<string, { nodes: FileNode[]; timestamp: number }>();
 
   setMainWindow(win: BrowserWindow | null): void {
     this.mainWindow = win;
@@ -48,12 +55,40 @@ export class WorkspaceService {
 
   async setRoot(path: string): Promise<void> {
     this.stopWatch();
+    this.dirCache.clear();
+    this.pendingWatchPaths.clear();
     this.rootPath = path;
+    await this.loadGitIgnore(path);
     this.startWatch(path);
+  }
+
+  private async loadGitIgnore(root: string): Promise<void> {
+    const matcher = new GitIgnoreMatcher();
+    const candidates = [join(root, ".gitignore"), join(root, ".beideignore")];
+    for (const file of candidates) {
+      try {
+        const content = await readFile(file, "utf-8");
+        matcher.addPatterns(content);
+      } catch {
+        /* missing file is ok */
+      }
+    }
+    this.gitIgnoreMatcher = matcher;
+  }
+
+  clearCache(): void {
+    this.dirCache.clear();
   }
 
   async readDir(dirPath?: string): Promise<FileNode[]> {
     const root = this.requireRoot();
+    const cacheKey = (dirPath || "").replace(/\\/g, "/");
+    const cached = this.dirCache.get(cacheKey);
+    const now = Date.now();
+    if (cached && now - cached.timestamp < CACHE_TTL_MS) {
+      return cached.nodes;
+    }
+
     const absolute = resolveInWorkspace(root, dirPath);
     let entries;
     try {
@@ -65,11 +100,23 @@ export class WorkspaceService {
     const nodes: FileNode[] = [];
     for (const entry of entries) {
       if (entry.name === "." || entry.name === "..") continue;
-      if (entry.isDirectory() && (SKIP_DIR_NAMES.has(entry.name) || shouldSkipDir(entry.name, dirPath || ""))) continue;
+
+      const relParent = dirPath ? dirPath.replace(/\\/g, "/") : "";
+      const relPath = relParent ? `${relParent}/${entry.name}` : entry.name;
+      const isDir = entry.isDirectory();
+
+      // Directory skip lists must not hide files that happen to share a name
+      // with a heavy directory (e.g. a file literally called `out` or `dist`).
+      if (isDir && shouldSkipDir(entry.name, relParent, this.gitIgnoreMatcher)) {
+        continue;
+      }
+      if (this.gitIgnoreMatcher?.ignores(relPath, isDir)) {
+        continue;
+      }
 
       const full = join(absolute, entry.name);
       const rel = toWorkspaceRelative(root, full);
-      if (entry.isDirectory()) {
+      if (isDir) {
         nodes.push({
           name: entry.name,
           path: rel,
@@ -88,12 +135,14 @@ export class WorkspaceService {
       if (a.type !== b.type) return a.type === "directory" ? -1 : 1;
       return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
     });
+
+    this.dirCache.set(cacheKey, { nodes, timestamp: now });
     return nodes;
   }
 
   async readFile(filePath: string, maxBytes = 8_000_000): Promise<string> {
     const root = this.requireRoot();
-    const absolute = resolveInWorkspace(root, filePath);
+    const absolute = await resolveRealInWorkspace(root, filePath);
     const st = await stat(absolute);
     if (!st.isFile()) {
       throw new Error(`Not a file: ${filePath}`);
@@ -119,7 +168,7 @@ export class WorkspaceService {
     if (content.length > 8_000_000) {
       throw new Error("content too large (max 8MB)");
     }
-    const absolute = resolveInWorkspace(root, filePath);
+    const absolute = await resolveRealInWorkspace(root, filePath);
     await mkdir(dirname(absolute), { recursive: true });
     // Atomic-ish write: temp then replace (Windows-safe)
     const tmp = `${absolute}.beide-tmp-${process.pid}-${Date.now()}`;
@@ -140,6 +189,7 @@ export class WorkspaceService {
       }
       throw e;
     }
+    this.dirCache.clear();
   }
 
   async pathExists(filePath: string): Promise<boolean> {
@@ -157,19 +207,23 @@ export class WorkspaceService {
   /** Delete file or directory (recursive) inside workspace. */
   async deletePath(targetPath: string): Promise<void> {
     const root = this.requireRoot();
-    const absolute = resolveInWorkspace(root, targetPath);
-    // Never delete workspace root itself
-    if (absolute === root || absolute === root + sep) {
+    const absolute = await resolveRealInWorkspace(root, targetPath);
+    // Never delete workspace root itself. Windows paths are case-insensitive,
+    // so `../IDE` resolves to the root while comparing unequal to `…\ide` —
+    // an exact compare let that rm -rf the whole workspace.
+    const cmp = (p: string) => (process.platform === "win32" ? p.toLowerCase() : p);
+    if (cmp(absolute) === cmp(root) || cmp(absolute) === cmp(root + sep)) {
       throw new Error("Cannot delete workspace root");
     }
     await rm(absolute, { recursive: true, force: true });
+    this.dirCache.clear();
     this.notifyChanged(targetPath);
   }
 
   /** Rename / move within workspace. newName can be basename or relative path. */
   async renamePath(targetPath: string, newName: string): Promise<string> {
     const root = this.requireRoot();
-    const absolute = resolveInWorkspace(root, targetPath);
+    const absolute = await resolveRealInWorkspace(root, targetPath);
     const clean = newName.trim().replace(/[/\\]+/g, sep);
     if (!clean || clean === "." || clean === "..") {
       throw new Error("Invalid name");
@@ -178,10 +232,28 @@ export class WorkspaceService {
       ? resolveInWorkspace(root, clean)
       : join(dirname(absolute), clean);
     // stay inside workspace
-    resolveInWorkspace(root, relative(root, destAbs) || ".");
+    await resolveRealInWorkspace(root, relative(root, destAbs) || ".");
+    // fsRename silently overwrites the destination — a rename onto an existing
+    // file would destroy it with no checkpoint to recover from.
+    const sameAsSource =
+      process.platform === "win32"
+        ? destAbs.toLowerCase() === absolute.toLowerCase()
+        : destAbs === absolute;
+    if (!sameAsSource) {
+      let destExists = true;
+      try {
+        await access(destAbs);
+      } catch {
+        destExists = false;
+      }
+      if (destExists) {
+        throw new Error(`Already exists: ${toWorkspaceRelative(root, destAbs)}`);
+      }
+    }
     await mkdir(dirname(destAbs), { recursive: true });
     await fsRename(absolute, destAbs);
     const newRel = toWorkspaceRelative(root, destAbs);
+    this.dirCache.clear();
     this.notifyChanged(targetPath);
     this.notifyChanged(newRel);
     return newRel;
@@ -189,14 +261,23 @@ export class WorkspaceService {
 
   async revealInFolder(targetPath: string): Promise<void> {
     const root = this.requireRoot();
-    const absolute = resolveInWorkspace(root, targetPath);
+    const absolute = await resolveRealInWorkspace(root, targetPath);
     shell.showItemInFolder(absolute);
   }
 
+  /** `webContents.send` throws once the window is destroyed — always go via here. */
+  private post(payload: unknown): void {
+    const win = this.mainWindow;
+    if (!win || win.isDestroyed()) return;
+    try {
+      win.webContents.send("workspace:changed", payload);
+    } catch {
+      // renderer torn down between the check and the send
+    }
+  }
+
   private notifyChanged(relPath: string): void {
-    this.mainWindow?.webContents.send("workspace:changed", {
-      path: relPath.replace(/\\/g, "/"),
-    });
+    this.post({ path: relPath.replace(/\\/g, "/") });
   }
 
   async searchFiles(query: string): Promise<string[]> {
@@ -221,12 +302,20 @@ export class WorkspaceService {
         if (results.length >= limit || visited >= maxVisit) return;
         visited += 1;
         if (entry.name === "." || entry.name === "..") continue;
-        if (entry.isDirectory() && shouldSkipDir(entry.name, relParent)) continue;
+
+        const rel = relParent ? `${relParent}/${entry.name}` : entry.name;
+        const isDir = entry.isDirectory();
+
+        if (isDir && shouldSkipDir(entry.name, relParent, this.gitIgnoreMatcher)) {
+          continue;
+        }
+        if (this.gitIgnoreMatcher?.ignores(rel, isDir)) {
+          continue;
+        }
 
         const full = join(dir, entry.name);
-        const rel = relParent ? `${relParent}/${entry.name}` : entry.name;
 
-        if (entry.isDirectory()) {
+        if (isDir) {
           await walk(full, rel, depth + 1);
         } else if (entry.isFile()) {
           const nameL = entry.name.toLowerCase();
@@ -240,13 +329,6 @@ export class WorkspaceService {
 
     await walk(root, "", 0);
     return results;
-  }
-
-  /** Read absolute path only if under workspace (for agent helpers). */
-  async readAbsolute(absolutePath: string): Promise<string> {
-    const root = this.requireRoot();
-    resolveInWorkspace(root, relative(root, absolutePath) || ".");
-    return readFile(absolutePath, "utf-8");
   }
 
   private requireRoot(): string {
@@ -266,12 +348,32 @@ export class WorkspaceService {
         if (parts.some((p) => SKIP_DIR_NAMES.has(p))) return;
         if (parts.includes("checkpoints")) return;
 
+        const relPath = name.replace(/\\/g, "/");
+        if (this.gitIgnoreMatcher?.ignores(relPath)) return;
+
+        this.pendingWatchPaths.add(relPath);
+
         if (this.watchTimer) clearTimeout(this.watchTimer);
-        this.watchTimer = setTimeout(() => {
-          this.mainWindow?.webContents.send("workspace:changed", {
-            path: name.replace(/\\/g, "/"),
-          });
-        }, 120);
+        this.watchTimer = setTimeout(async () => {
+          this.dirCache.clear();
+          const paths = Array.from(this.pendingWatchPaths);
+          this.pendingWatchPaths.clear();
+          if (paths.length === 0) return;
+
+          if (
+            paths.some(
+              (p) =>
+                p === ".gitignore" ||
+                p === ".beideignore" ||
+                p.endsWith("/.gitignore") ||
+                p.endsWith("/.beideignore"),
+            )
+          ) {
+            await this.loadGitIgnore(root);
+          }
+
+          this.post({ path: paths[0], paths });
+        }, 150);
       });
       this.watcher.on("error", () => {
         // Recursive watch can fail on some FS; ignore
@@ -294,36 +396,8 @@ export class WorkspaceService {
 
   dispose(): void {
     this.stopWatch();
+    this.dirCache.clear();
+    this.pendingWatchPaths.clear();
     this.rootPath = null;
   }
-}
-
-/** Utility used by checkpoints to copy single files. */
-export async function ensureParentDir(filePath: string): Promise<void> {
-  await mkdir(join(filePath, ".."), { recursive: true });
-}
-
-export async function fileStatSafe(path: string): Promise<{ isFile: boolean; size: number } | null> {
-  try {
-    const s = await stat(path);
-    return { isFile: s.isFile(), size: s.size };
-  } catch {
-    return null;
-  }
-}
-
-export function fileBasename(path: string): string {
-  return basename(path);
-}
-
-export function joinPath(...parts: string[]): string {
-  return join(...parts);
-}
-
-export function splitPath(path: string): string[] {
-  return path.split(/[/\\]/).filter(Boolean);
-}
-
-export function pathSep(): string {
-  return sep;
 }

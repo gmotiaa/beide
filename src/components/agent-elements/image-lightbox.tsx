@@ -1,6 +1,5 @@
-"use client";
-
 import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { createPortal } from "react-dom";
 import {
   IconChevronLeft,
@@ -41,6 +40,7 @@ export function ImageLightbox({
   images,
   initialIndex = 0,
 }: ImageLightboxProps) {
+  const { t } = useTranslation();
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
   const hasMultipleImages = images.length > 1;
 
@@ -114,7 +114,7 @@ export function ImageLightbox({
       <button
         type="button"
         onClick={onClose}
-        aria-label="Close fullscreen (Esc)"
+        aria-label={t("agentElements.lightboxClose")}
         className="absolute top-4 right-4 z-10 inline-flex size-9 items-center justify-center rounded-full bg-black/50 text-white hover:bg-black/70 transition-colors"
       >
         <IconX className="size-5" />
@@ -124,7 +124,7 @@ export function ImageLightbox({
         <button
           type="button"
           onClick={goToPrevious}
-          aria-label="Previous image (←)"
+          aria-label={t("agentElements.lightboxPrev")}
           className="absolute left-4 top-1/2 z-10 inline-flex size-10 -translate-y-1/2 items-center justify-center rounded-full bg-black/50 text-white hover:bg-black/70 transition-colors"
         >
           <IconChevronLeft className="size-6" />
@@ -133,7 +133,7 @@ export function ImageLightbox({
 
       <img
         src={currentImage.url}
-        alt={currentImage.filename ?? "Image preview"}
+        alt={currentImage.filename ?? t("agentElements.imagePreview")}
         className="max-w-[90vw] max-h-[85vh] object-contain select-none"
         onClick={(event) => event.stopPropagation()}
         draggable={false}
@@ -143,7 +143,7 @@ export function ImageLightbox({
         <button
           type="button"
           onClick={goToNext}
-          aria-label="Next image (→)"
+          aria-label={t("agentElements.lightboxNext")}
           className="absolute right-4 top-1/2 z-10 inline-flex size-10 -translate-y-1/2 items-center justify-center rounded-full bg-black/50 text-white hover:bg-black/70 transition-colors"
         >
           <IconChevronRight className="size-6" />
@@ -161,7 +161,7 @@ export function ImageLightbox({
                   event.stopPropagation();
                   setCurrentIndex(idx);
                 }}
-                aria-label={`Go to image ${idx + 1}`}
+                aria-label={t("agentElements.lightboxGoTo", { index: idx + 1 })}
                 className={cn(
                   "size-2 rounded-full transition-all",
                   idx === currentIndex

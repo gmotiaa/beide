@@ -36,6 +36,7 @@ export function AppLayout() {
 
   const bootstrap = useWorkspaceStore((s) => s.bootstrap);
   const refreshTree = useWorkspaceStore((s) => s.refreshTree);
+  const openFolder = useWorkspaceStore((s) => s.openFolder);
   const saveActive = useEditorStore((s) => s.saveActive);
   const reloadPath = useEditorStore((s) => s.reloadPath);
   const agentInit = useAgentStore((s) => s.init);
@@ -70,6 +71,12 @@ export function AppLayout() {
         e.preventDefault();
         void saveActive();
       }
+      // TitleBar's menu and the editor welcome cards advertise Ctrl+O; the
+      // handler has to actually exist for that promise to hold.
+      if (mod && e.key.toLowerCase() === "o") {
+        e.preventDefault();
+        void openFolder();
+      }
       if (mod && e.key.toLowerCase() === "l") {
         e.preventDefault();
         setChatOpen(true);
@@ -89,7 +96,7 @@ export function AppLayout() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [saveActive]);
+  }, [saveActive, openFolder]);
 
   const onSidebarResize = useCallback((delta: number) => {
     setSidebarWidth((w) => Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, w + delta)));

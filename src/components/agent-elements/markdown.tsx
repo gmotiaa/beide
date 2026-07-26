@@ -1,5 +1,3 @@
-"use client";
-
 import { Streamdown, type Components } from "streamdown";
 import { createCodePlugin } from "@streamdown/code";
 import { cn } from "./utils/cn";

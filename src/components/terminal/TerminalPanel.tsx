@@ -1,7 +1,15 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
-import { Button, Chip, CloseButton, Tooltip } from "@heroui/react";
-import { IconPlayerPlay, IconTrash } from "@tabler/icons-react";
+import { IconPlayerPlay, IconTrash, IconX } from "@tabler/icons-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { getBeide } from "../../lib/ipc";
 import { useWorkspaceStore } from "../../stores/workspace";
 
@@ -23,10 +31,7 @@ export function TerminalPanel({ collapsed, onClose }: TerminalPanelProps) {
   const { t } = useTranslation();
   const rootPath = useWorkspaceStore((s) => s.rootPath);
   const [lines, setLines] = useState<TermLine[]>([
-    {
-      kind: "meta",
-      text: "beide terminal — команда + Enter (cwd = workspace)",
-    },
+    { kind: "meta", text: t("terminal.welcome") },
   ]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -66,7 +71,7 @@ export function TerminalPanel({ collapsed, onClose }: TerminalPanelProps) {
     if (!api) {
       setLines((prev) => [
         ...prev,
-        { kind: "err", text: "window.beide.shell unavailable — restart beide" },
+        { kind: "err", text: t("terminal.shellUnavailable") },
       ]);
       return;
     }
@@ -88,7 +93,7 @@ export function TerminalPanel({ collapsed, onClose }: TerminalPanelProps) {
         });
       }
       if (!result.stdout?.trim() && !result.stderr?.trim()) {
-        next.push({ kind: "meta", text: "(no output)" });
+        next.push({ kind: "meta", text: t("terminal.noOutput") });
       }
       next.push({
         kind: "meta",
@@ -153,37 +158,55 @@ export function TerminalPanel({ collapsed, onClose }: TerminalPanelProps) {
         <div className="terminal-panel__title-row">
           <span className="terminal-panel__title">{t("terminal.title")}</span>
           {cwdShort ? (
-            <Chip size="sm" variant="soft" className="terminal-panel__cwd-chip">
+            <Badge variant="secondary" className="terminal-panel__cwd-chip">
               {cwdShort}
-            </Chip>
+            </Badge>
           ) : (
-            <Chip size="sm" color="warning" variant="soft">
-              no workspace
-            </Chip>
+            <Badge
+              variant="secondary"
+              className="border-transparent bg-[color:var(--warning-muted)] text-[color:var(--warning)]"
+            >
+              {t("status.noWorkspace")}
+            </Badge>
           )}
           {busy && (
-            <Chip size="sm" color="accent" variant="soft">
-              running
-            </Chip>
+            <Badge
+              variant="secondary"
+              className="border-transparent bg-primary/10 text-primary"
+            >
+              {t("terminal.running")}
+            </Badge>
           )}
         </div>
         <div className="terminal-panel__header-actions">
-          <Tooltip delay={300}>
-            <Button
-              isIconOnly
-              size="sm"
-              variant="ghost"
-              aria-label={t("terminal.clear")}
-              onPress={() => setLines([])}
-            >
-              <IconTrash size={16} stroke={1.75} />
-            </Button>
-            <Tooltip.Content>
-              <p>{t("terminal.clear")}</p>
-            </Tooltip.Content>
-          </Tooltip>
+          <TooltipProvider delay={300}>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label={t("terminal.clear")}
+                    onClick={() => setLines([])}
+                  />
+                }
+              >
+                <IconTrash size={16} stroke={1.75} />
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>{t("terminal.clear")}</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
           {onClose && (
-            <CloseButton aria-label={t("common.close")} onPress={onClose} />
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label={t("common.close")}
+              onClick={onClose}
+            >
+              <IconX size={16} stroke={1.75} />
+            </Button>
           )}
         </div>
       </div>
@@ -226,11 +249,14 @@ export function TerminalPanel({ collapsed, onClose }: TerminalPanelProps) {
         />
         <Button
           size="sm"
-          isDisabled={busy || !rootPath || !input.trim()}
-          isPending={busy}
-          onPress={() => void run(input)}
+          disabled={busy || !rootPath || !input.trim()}
+          onClick={() => void run(input)}
         >
-          <IconPlayerPlay size={14} stroke={2} />
+          {busy ? (
+            <Spinner size="sm" />
+          ) : (
+            <IconPlayerPlay size={14} stroke={2} />
+          )}
           {t("terminal.run")}
         </Button>
       </div>

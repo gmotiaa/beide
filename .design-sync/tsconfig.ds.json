@@ -1,0 +1,16 @@
+{
+  "_comment": "design-sync only, read by the converter's tsconfig-paths plugin. Deliberately minimal and free of comment syntax: the plugin strips comments with a regex that also eats an @ slash star alias and any include glob, so this file carries the stub mapping alone. The app's own @ alias resolves from the root tsconfig.json, which esbuild picks up on its own. See .design-sync/NOTES.md.",
+  "compilerOptions": {
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "baseUrl": "..",
+    "paths": {
+      "shiki": [
+        ".design-sync/stubs/shiki.ts"
+      ],
+      "lottie-react": [
+        "node_modules/lottie-react/build/index.es.js"
+      ]
+    }
+  }
+}

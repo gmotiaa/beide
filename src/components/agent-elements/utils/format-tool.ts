@@ -10,7 +10,24 @@ type CachedToolState = {
   outputJson: string;
 };
 
+/**
+ * Cap the cache so long sessions don't accumulate a full JSON copy of every
+ * tool call's input/output forever. The Map preserves insertion order, so the
+ * first key is always the oldest entry — a cheap LRU.
+ */
+const TOOL_STATE_CACHE_LIMIT = 300;
 const toolStateCache = new Map<string, CachedToolState>();
+
+function setCachedToolState(toolCallId: string, state: CachedToolState): void {
+  // Re-inserting moves the key to the tail, keeping actively streaming tools
+  // away from the eviction end.
+  if (toolStateCache.has(toolCallId)) toolStateCache.delete(toolCallId);
+  toolStateCache.set(toolCallId, state);
+  if (toolStateCache.size > TOOL_STATE_CACHE_LIMIT) {
+    const oldestKey = toolStateCache.keys().next().value;
+    if (oldestKey !== undefined) toolStateCache.delete(oldestKey);
+  }
+}
 
 function getToolStateSnapshot(part: any): CachedToolState {
   return {
@@ -25,7 +42,7 @@ function hasToolStateChanged(toolCallId: string, part: any): boolean {
   const current = getToolStateSnapshot(part);
 
   if (!cached) {
-    toolStateCache.set(toolCallId, current);
+    setCachedToolState(toolCallId, current);
     return true;
   }
 
@@ -35,7 +52,7 @@ function hasToolStateChanged(toolCallId: string, part: any): boolean {
     cached.outputJson !== current.outputJson;
 
   if (changed) {
-    toolStateCache.set(toolCallId, current);
+    setCachedToolState(toolCallId, current);
   }
 
   return changed;

@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { getBeide } from "../lib/ipc";
 import {
   canSpend,
+  effectiveLimits,
   emptyUsage,
   estimateTokens,
   normalizeUsage,
@@ -11,11 +12,13 @@ import {
 import {
   addCreditsCloud,
   fetchBilling,
+  fetchUsageHistory,
   isBillingUser,
   resetUsageCloud,
   setPlanCloud,
   spendTokensCloud,
   type BillingSource,
+  type UsageHistoryDay,
 } from "../lib/supabase-billing";
 import { TOOL_TOKEN_COST } from "../lib/usage";
 
@@ -25,13 +28,17 @@ interface UsageStore {
   loaded: boolean;
   /** Cloud user email when source=supabase */
   accountEmail: string | null;
+  /** Last billing error shown to the user (RPC rejection, demo gate, …) */
+  error: string | null;
+  history: UsageHistoryDay[];
   load: () => Promise<void>;
+  loadHistory: (days?: number) => Promise<void>;
   setPlan: (plan: UsagePlanId) => Promise<void>;
   addCredits: (amount?: number) => Promise<void>;
   recordPrompt: (text: string) => Promise<{ ok: boolean; reason?: string }>;
   recordTools: (count?: number) => Promise<void>;
   resetToday: () => Promise<void>;
-  canPrompt: (text?: string) => boolean;
+  clearError: () => void;
 }
 
 const fallback = emptyUsage("free");
@@ -58,6 +65,18 @@ export const useUsageStore = create<UsageStore>((set, get) => ({
   source: "none",
   loaded: false,
   accountEmail: null,
+  error: null,
+  history: [],
+
+  clearError: () => set({ error: null }),
+
+  loadHistory: async (days = 14) => {
+    if (get().source !== "supabase") {
+      set({ history: [] });
+      return;
+    }
+    set({ history: await fetchUsageHistory(days) });
+  },
 
   load: async () => {
     // Prefer Supabase when signed in
@@ -70,6 +89,7 @@ export const useUsageStore = create<UsageStore>((set, get) => ({
             source: "supabase",
             accountEmail: cloud.email ?? null,
             loaded: true,
+            error: null,
           });
           return;
         }
@@ -105,39 +125,36 @@ export const useUsageStore = create<UsageStore>((set, get) => ({
 
   setPlan: async (plan) => {
     if (get().source === "supabase") {
-      const data = await setPlanCloud(plan);
-      if (data) {
-        set({ data: normalizeUsage(data), source: "supabase" });
-        return;
+      // Server-side gate: on a non-demo project the plan only changes through
+      // the billing provider, so keep the local state as-is and report why.
+      const res = await setPlanCloud(plan);
+      if (res.ok && res.data) {
+        set({ data: res.data, source: "supabase", error: null });
+      } else {
+        set({ error: res.message ?? "Не удалось сменить план" });
       }
-    }
-
-    const api = getBeide();
-    if (api?.usage) {
-      const data = await api.usage.setPlan(plan);
-      set({ data: normalizeUsage(data), source: "local" });
       return;
     }
+
+    // Local fallback — no IPC setPlan (removed for security); persist locally only
     const next = normalizeUsage({ ...get().data, plan });
-    set({ data: next, source: "local" });
+    set({ data: next, source: "local", error: null });
     persistLocal(next);
   },
 
   addCredits: async (amount = 10_000) => {
     if (get().source === "supabase") {
-      const data = await addCreditsCloud(amount);
-      if (data) set({ data: normalizeUsage(data) });
+      const res = await addCreditsCloud(amount);
+      if (res.ok && res.data) set({ data: res.data, error: null });
+      else set({ error: res.message ?? "Не удалось начислить бонус" });
       return;
     }
     // Local demo top-up
     const cur = normalizeUsage(get().data);
     const next = { ...cur, credits: cur.credits + Math.max(0, amount) };
-    set({ data: next });
+    set({ data: next, error: null });
     if (get().source === "local") persistLocal(next);
   },
-
-  canPrompt: (text = "") =>
-    canSpend(normalizeUsage(get().data), estimateTokens(text)).ok,
 
   recordPrompt: async (text) => {
     const cost = estimateTokens(text || "(image)");
@@ -148,14 +165,15 @@ export const useUsageStore = create<UsageStore>((set, get) => ({
     // Cloud: atomic spend_tokens RPC
     if (get().source === "supabase") {
       const res = await spendTokensCloud(cost);
+      // `res.data` on a rejection is a re-fetched snapshot, not the rejection
+      // envelope — safe to trust in both branches.
+      if (res.data) set({ data: res.data });
       if (!res.ok) {
-        if (res.data) set({ data: normalizeUsage(res.data) });
-        return {
-          ok: false,
-          reason: res.error ?? "Лимит токенов исчерпан",
-        };
+        const reason = res.message ?? "Лимит токенов исчерпан";
+        set({ error: reason });
+        return { ok: false, reason };
       }
-      if (res.data) set({ data: normalizeUsage(res.data) });
+      set({ error: null });
       return { ok: true };
     }
 
@@ -167,9 +185,7 @@ export const useUsageStore = create<UsageStore>((set, get) => ({
       return { ok: true };
     }
 
-    const limits = (
-      await import("../lib/usage")
-    ).PLANS[data.plan];
+    const limits = effectiveLimits(data);
     let h5 = data.h5.used;
     let week = data.week.used;
     let credits = data.credits;
@@ -188,7 +204,7 @@ export const useUsageStore = create<UsageStore>((set, get) => ({
       remaining -= fromCredits;
     }
     const next: UsageStateData = {
-      plan: data.plan,
+      ...data,
       h5: { ...data.h5, used: h5 },
       week: { ...data.week, used: week },
       credits,
@@ -204,7 +220,8 @@ export const useUsageStore = create<UsageStore>((set, get) => ({
 
     if (get().source === "supabase") {
       const res = await spendTokensCloud(cost);
-      if (res.data) set({ data: normalizeUsage(res.data) });
+      if (res.data) set({ data: res.data });
+      if (!res.ok) set({ error: res.message ?? "Лимит токенов исчерпан" });
       return;
     }
 
@@ -227,18 +244,14 @@ export const useUsageStore = create<UsageStore>((set, get) => ({
 
   resetToday: async () => {
     if (get().source === "supabase") {
-      const data = await resetUsageCloud();
-      if (data) set({ data: normalizeUsage(data) });
+      const res = await resetUsageCloud();
+      if (res.ok && res.data) set({ data: res.data, error: null });
+      else set({ error: res.message ?? "Сброс лимитов недоступен" });
       return;
     }
-    const api = getBeide();
-    if (api?.usage) {
-      const data = await api.usage.resetToday();
-      set({ data: normalizeUsage(data), source: "local" });
-      return;
-    }
+    // Local fallback — no IPC resetToday (removed for security); reset locally only
     const next = emptyUsage(get().data.plan);
-    set({ data: next, source: "local" });
+    set({ data: next, source: "local", error: null });
     persistLocal(next);
   },
 }));

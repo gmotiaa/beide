@@ -47,6 +47,13 @@ export interface UsageBucket {
   used: number;
 }
 
+/** Quota actually enforced by the backend (`plan_limits` row). */
+export interface UsageLimits {
+  label: string;
+  tokens5h: number;
+  tokensWeek: number;
+}
+
 export interface UsageStateData {
   plan: UsagePlanId;
   /** 5h token usage */
@@ -55,6 +62,29 @@ export interface UsageStateData {
   week: UsageBucket;
   /** remaining bonus tokens */
   credits: number;
+  /**
+   * Limits reported by Supabase. Absent offline — then `PLANS` is used.
+   * Always prefer this: the DB is the authority, `PLANS` is only a mirror.
+   */
+  limits?: UsageLimits;
+  /** Server allows self-service plan switch / top-up / reset (demo projects). */
+  demo?: boolean;
+}
+
+/** Server limits when known, local mirror otherwise. */
+export function effectiveLimits(data: UsageStateData): UsageLimits {
+  const local = PLANS[data.plan];
+  const l = data.limits;
+  if (
+    l &&
+    Number.isFinite(l.tokens5h) &&
+    Number.isFinite(l.tokensWeek) &&
+    l.tokens5h > 0 &&
+    l.tokensWeek > 0
+  ) {
+    return l;
+  }
+  return { label: local.label, tokens5h: local.tokens5h, tokensWeek: local.tokensWeek };
 }
 
 function bucketIndex(ms: number, ts = Date.now()): number {
@@ -130,7 +160,22 @@ export function normalizeUsage(
       ? Math.max(0, r.credits)
       : PLANS[plan].credits;
 
-  return { plan, h5, week, credits };
+  const rawLimits = r.limits as Partial<UsageLimits> | undefined;
+  const limits: UsageLimits | undefined =
+    rawLimits &&
+    Number(rawLimits.tokens5h) > 0 &&
+    Number(rawLimits.tokensWeek) > 0
+      ? {
+          label: String(rawLimits.label ?? PLANS[plan].label),
+          tokens5h: Number(rawLimits.tokens5h),
+          tokensWeek: Number(rawLimits.tokensWeek),
+        }
+      : undefined;
+
+  const out: UsageStateData = { plan, h5, week, credits };
+  if (limits) out.limits = limits;
+  if (typeof r.demo === "boolean") out.demo = r.demo;
+  return out;
 }
 
 export function remainingPct(used: number, limit: number): number {
@@ -183,7 +228,7 @@ export function canSpend(
   costTokens: number,
 ): { ok: boolean; reason?: string } {
   const cost = Math.max(1, Math.floor(costTokens));
-  const limits = PLANS[data.plan];
+  const limits = effectiveLimits(data);
   const h5left = limits.tokens5h - data.h5.used;
   const weekLeft = limits.tokensWeek - data.week.used;
   const pool = Math.min(h5left, weekLeft) + data.credits;

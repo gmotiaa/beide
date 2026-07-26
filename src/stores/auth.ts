@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { Session, User } from "@supabase/supabase-js";
+import i18n from "../i18n";
 import { getSupabase, isSupabaseConfigured } from "../lib/supabase";
 
 export type SignUpResult =
@@ -29,6 +30,9 @@ interface AuthState {
   clearPendingVerify: () => void;
 }
 
+/** Kept outside the store so a re-init can drop the previous listener. */
+let authSubscription: { unsubscribe: () => void } | null = null;
+
 export const useAuthStore = create<AuthState>((set) => ({
   ready: false,
   configured: isSupabaseConfigured(),
@@ -39,29 +43,38 @@ export const useAuthStore = create<AuthState>((set) => ({
   pendingVerifyEmail: null,
 
   init: async () => {
-    const sb = getSupabase();
-    if (!sb) {
-      set({ ready: true, configured: false, session: null, user: null });
-      return;
+    authSubscription?.unsubscribe();
+    authSubscription = null;
+    try {
+      const sb = getSupabase();
+      if (!sb) {
+        set({ configured: false, session: null, user: null });
+        return;
+      }
+      const { data } = await sb.auth.getSession();
+      set({
+        configured: true,
+        session: data.session,
+        user: data.session?.user ?? null,
+      });
+      const { data: listener } = sb.auth.onAuthStateChange((_event, session) => {
+        set({ session, user: session?.user ?? null });
+        // Reload billing when auth changes (subscription lives in Supabase)
+        void import("./usage").then((m) => m.useUsageStore.getState().load());
+      });
+      authSubscription = listener.subscription;
+    } catch (e) {
+      set({ error: e instanceof Error ? e.message : String(e) });
+    } finally {
+      // Always flip `ready` — otherwise the onboarding account step spins forever.
+      set({ ready: true });
     }
-    const { data } = await sb.auth.getSession();
-    set({
-      ready: true,
-      configured: true,
-      session: data.session,
-      user: data.session?.user ?? null,
-    });
-    sb.auth.onAuthStateChange((_event, session) => {
-      set({ session, user: session?.user ?? null });
-      // Reload billing when auth changes (subscription lives in Supabase)
-      void import("./usage").then((m) => m.useUsageStore.getState().load());
-    });
   },
 
   signIn: async (email, password) => {
     const sb = getSupabase();
     if (!sb) {
-      set({ error: "Supabase не настроен. Добавьте VITE_SUPABASE_* в .env" });
+      set({ error: i18n.t("auth.notConfigured") });
       return false;
     }
     set({ loading: true, error: null });
@@ -71,7 +84,7 @@ export const useAuthStore = create<AuthState>((set) => ({
         loading: false,
         error:
           error.message === "Failed to fetch"
-            ? "Нет сети до Supabase. Перезапусти beide после обновления."
+            ? i18n.t("auth.network")
             : error.message,
       });
       return false;
@@ -91,7 +104,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     if (!sb) {
       set({
         loading: false,
-        error: "Supabase не настроен. Добавьте VITE_SUPABASE_* в .env",
+        error: i18n.t("auth.notConfigured"),
       });
       return { ok: false };
     }
@@ -113,9 +126,18 @@ export const useAuthStore = create<AuthState>((set) => ({
         loading: false,
         error:
           error.message === "Failed to fetch"
-            ? "Нет сети до Supabase. Проверь интернет и перезапусти app."
+            ? i18n.t("auth.network")
             : error.message,
       });
+      return { ok: false };
+    }
+
+    // Enumeration-safe response for an already-confirmed email: Supabase
+    // returns a fake user with no error and empty identities. Treating it as
+    // "waiting for OTP" parked the user on a code screen where no code ever
+    // arrives — tell them to sign in instead.
+    if (!data.session && data.user && data.user.identities?.length === 0) {
+      set({ loading: false, error: i18n.t("auth.emailExists") });
       return { ok: false };
     }
 
@@ -145,7 +167,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   verifyEmailOtp: async (email, token) => {
     const sb = getSupabase();
     if (!sb) {
-      set({ error: "Supabase не настроен" });
+      set({ error: i18n.t("auth.notConfigured") });
       return false;
     }
     set({ loading: true, error: null });
@@ -169,7 +191,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     if (result.error) {
       set({
         loading: false,
-        error: result.error.message || "Неверный код",
+        error: result.error.message || i18n.t("auth.invalidCode"),
       });
       return false;
     }
@@ -187,7 +209,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   resendSignupOtp: async (email) => {
     const sb = getSupabase();
     if (!sb) {
-      set({ error: "Supabase не настроен" });
+      set({ error: i18n.t("auth.notConfigured") });
       return false;
     }
     set({ loading: true, error: null });

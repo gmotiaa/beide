@@ -1,13 +1,8 @@
 import { app } from "electron";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { UsagePlanId, UsageStateData } from "../../src/lib/usage";
-import {
-  PLANS,
-  TOOL_TOKEN_COST,
-  emptyUsage,
-  normalizeUsage,
-} from "../../src/lib/usage";
+import type { UsageStateData } from "../../src/lib/usage";
+import { PLANS, TOOL_TOKEN_COST, normalizeUsage } from "../../src/lib/usage";
 
 export class UsageService {
   private cache: UsageStateData | null = null;
@@ -17,29 +12,32 @@ export class UsageService {
     this.filePath = filePath ?? join(app.getPath("userData"), "usage.json");
   }
 
+  /**
+   * Reads the file once, then serves from memory. Windows are re-rolled on
+   * every call so a long-running app still resets at the 5h/weekly boundary;
+   * disk is only touched when that roll (or the initial load) changes state.
+   */
   async get(): Promise<UsageStateData> {
-    try {
-      const raw = JSON.parse(
-        await readFile(this.filePath, "utf-8"),
-      ) as Partial<UsageStateData>;
+    if (!this.cache) {
+      let raw: Partial<UsageStateData> | null = null;
+      try {
+        raw = JSON.parse(
+          await readFile(this.filePath, "utf-8"),
+        ) as Partial<UsageStateData>;
+      } catch {
+        raw = null;
+      }
       this.cache = normalizeUsage(raw);
-    } catch {
-      this.cache = normalizeUsage(null);
+      await this.persist();
+      return clone(this.cache);
     }
-    await this.persist();
-    return clone(this.cache);
-  }
 
-  async setPlan(plan: UsagePlanId): Promise<UsageStateData> {
-    const cur = await this.get();
-    const nextPlan = plan === "pro" ? "pro" : "free";
-    this.cache = {
-      ...cur,
-      plan: nextPlan,
-      credits: cur.credits > 0 ? cur.credits : PLANS[nextPlan].credits,
-    };
-    await this.persist();
-    return this.get();
+    const rolled = normalizeUsage(this.cache);
+    const rolledOver =
+      rolled.h5.key !== this.cache.h5.key || rolled.week.key !== this.cache.week.key;
+    this.cache = rolled;
+    if (rolledOver) await this.persist();
+    return clone(this.cache);
   }
 
   /**
@@ -61,7 +59,7 @@ export class UsageService {
     if ((delta.tools ?? 0) > 0) {
       cost += TOOL_TOKEN_COST * Math.max(0, delta.tools ?? 0);
     }
-    if (cost <= 0) return this.get();
+    if (cost <= 0) return cur;
 
     const limits = PLANS[cur.plan];
     let h5 = cur.h5.used;
@@ -98,25 +96,16 @@ export class UsageService {
       credits,
     };
     await this.persist();
-    return this.get();
-  }
-
-  async resetToday(): Promise<UsageStateData> {
-    const cur = await this.get();
-    this.cache = emptyUsage(cur.plan);
-    this.cache.credits = cur.credits;
-    await this.persist();
-    return this.get();
+    return clone(this.cache);
   }
 
   private async persist(): Promise<void> {
     if (!this.cache) return;
     await mkdir(dirname(this.filePath), { recursive: true });
-    await writeFile(
-      this.filePath,
-      JSON.stringify(this.cache, null, 2),
-      "utf-8",
-    );
+    // tmp+rename: a torn write here silently resets the quota counters.
+    const tmp = `${this.filePath}.tmp_${process.pid}`;
+    await writeFile(tmp, JSON.stringify(this.cache, null, 2), "utf-8");
+    await rename(tmp, this.filePath);
   }
 }
 

@@ -290,9 +290,13 @@ export function toUIMessages(messages: ChatMessage[]): UIMessage[] {
 
       const name = m.toolName ?? "tool";
       const type = toolPartType(name);
+      // A running beide tool already has its full arguments — pi only emits
+      // tool_execution_start once the call is parsed. `input-streaming` means
+      // "arguments still arriving" and makes every card render its
+      // partial-call placeholder instead of the actual command/path.
       const state =
         m.toolStatus === "running"
-          ? "input-streaming"
+          ? "input-available"
           : m.toolStatus === "error"
             ? "output-error"
             : "output-available";

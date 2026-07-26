@@ -1,19 +1,8 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
-  Alert,
-  Avatar as HeroAvatar,
-  Button as HeroButton,
-  Form,
-  Input as HeroInput,
-  InputOTP,
-  Label as HeroLabel,
-  Link,
-  Modal,
-  REGEXP_ONLY_DIGITS,
-  Spinner,
-  TextField,
-} from "@heroui/react";
-import {
+  IconAlertCircle,
+  IconAlertTriangle,
   IconFolder,
   IconMap2,
   IconRobot,
@@ -21,6 +10,8 @@ import {
   IconSparkles,
   IconTerminal2,
 } from "@tabler/icons-react";
+import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
+import { Avatar, AvatarFallback } from "../ui/avatar";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
@@ -30,8 +21,19 @@ import {
   CardHeader,
   CardTitle,
 } from "../ui/card";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../ui/dialog";
+import { Input } from "../ui/input";
+import { Label } from "../ui/label";
 import { Progress } from "../ui/progress";
 import { Separator } from "../ui/separator";
+import { Spinner } from "../ui/spinner";
 import { Tabs, TabsList, TabsTrigger } from "../ui/tabs";
 import { cn } from "../../lib/utils";
 import { useOnboardingStore } from "../../stores/onboarding";
@@ -41,34 +43,6 @@ import type { ThemeId, LanguageId, PermissionMode } from "../../lib/types";
 
 const STEPS = ["welcome", "features", "settings", "account"] as const;
 type Step = (typeof STEPS)[number];
-
-const STEP_LABELS: Record<Step, string> = {
-  welcome: "Старт",
-  features: "Режимы",
-  settings: "Настройки",
-  account: "Аккаунт",
-};
-
-const FEATURES = [
-  {
-    icon: IconMap2,
-    title: "План",
-    body: "Читает репозиторий, пишет план. Файлы не трогает.",
-    chip: "readonly",
-  },
-  {
-    icon: IconRobot,
-    title: "Агент",
-    body: "Edit / write / bash. Опасные действия — только после твоего ok.",
-    chip: "tools",
-  },
-  {
-    icon: IconFolder,
-    title: "Контекст",
-    body: "@файл, картинки, дерево workspace — агент видит проект.",
-    chip: "context",
-  },
-] as const;
 
 function ChoicePill({
   active,
@@ -96,6 +70,10 @@ function ChoicePill({
 }
 
 export function Onboarding() {
+  // Labels must be resolved inside the render (not module-level constants):
+  // the language switch on the settings step re-renders this component and
+  // every string below picks up the new locale immediately.
+  const { t } = useTranslation();
   const step = useOnboardingStore((s) => s.step);
   const setStep = useOnboardingStore((s) => s.setStep);
   const complete = useOnboardingStore((s) => s.complete);
@@ -129,6 +107,34 @@ export function Onboarding() {
   const idx = Math.max(0, STEPS.indexOf(step as Step));
   const progress = ((idx + 1) / STEPS.length) * 100;
   const currentStep = STEPS[idx] ?? "welcome";
+
+  const stepLabels: Record<Step, string> = {
+    welcome: t("onboarding.stepWelcome"),
+    features: t("onboarding.stepFeatures"),
+    settings: t("onboarding.stepSettings"),
+    account: t("onboarding.stepAccount"),
+  };
+
+  const features = [
+    {
+      icon: IconMap2,
+      title: t("onboarding.featurePlanTitle"),
+      body: t("onboarding.featurePlanBody"),
+      chip: "readonly",
+    },
+    {
+      icon: IconRobot,
+      title: t("onboarding.featureAgentTitle"),
+      body: t("onboarding.featureAgentBody"),
+      chip: "tools",
+    },
+    {
+      icon: IconFolder,
+      title: t("onboarding.featureContextTitle"),
+      body: t("onboarding.featureContextBody"),
+      chip: "context",
+    },
+  ] as const;
 
   useEffect(() => {
     clearError();
@@ -192,7 +198,7 @@ export function Onboarding() {
       className="onboarding"
       role="dialog"
       aria-modal="true"
-      aria-label="Онбординг beide"
+      aria-label={t("onboarding.ariaLabel")}
     >
       <div className="onboarding__bg" aria-hidden>
         <div className="onboarding__orb onboarding__orb--a" />
@@ -217,14 +223,11 @@ export function Onboarding() {
             </div>
 
             <h2 className="onboarding__headline">
-              IDE, где агент
+              {t("onboarding.headlineTop")}
               <br />
-              <span>рядом с кодом</span>
+              <span>{t("onboarding.headlineAccent")}</span>
             </h2>
-            <p className="onboarding__sub">
-              Monaco · Plan / Agent · diff перед записью · checkpoints. Grok
-              через локальный ~/.pi/agent.
-            </p>
+            <p className="onboarding__sub">{t("onboarding.sub")}</p>
           </div>
 
           <div className="onboarding__aside-stats">
@@ -235,7 +238,9 @@ export function Onboarding() {
                 </div>
                 <div className="min-w-0">
                   <CardTitle className="text-sm">pi + Grok</CardTitle>
-                  <CardDescription>агент в main process</CardDescription>
+                  <CardDescription>
+                    {t("onboarding.statAgentDesc")}
+                  </CardDescription>
                 </div>
               </CardHeader>
             </Card>
@@ -246,7 +251,9 @@ export function Onboarding() {
                 </div>
                 <div className="min-w-0">
                   <CardTitle className="text-sm">ask / auto</CardTitle>
-                  <CardDescription>права перед записью</CardDescription>
+                  <CardDescription>
+                    {t("onboarding.statPermissionsDesc")}
+                  </CardDescription>
                 </div>
               </CardHeader>
             </Card>
@@ -275,7 +282,7 @@ export function Onboarding() {
                   >
                     <span className="onboarding__step-num">{i + 1}</span>
                     <span className="onboarding__step-label">
-                      {STEP_LABELS[s]}
+                      {stepLabels[s]}
                     </span>
                   </button>
                 );
@@ -288,29 +295,25 @@ export function Onboarding() {
             {currentStep === "welcome" && (
               <section className="onboarding__section">
                 <Badge variant="secondary" className="w-fit font-normal">
-                  Шаг 1 · Welcome
+                  {t("onboarding.badgeWelcome")}
                 </Badge>
-                <h1>Добро пожаловать в beide</h1>
-                <p className="onboarding__lead">
-                  Открой папку, пиши в Monaco, справа — агент. Plan только
-                  исследует, Agent может править файлы под твоим контролем.
-                </p>
+                <h1>{t("onboarding.welcomeTitle")}</h1>
+                <p className="onboarding__lead">{t("onboarding.welcomeLead")}</p>
 
                 <div className="onboarding__hero-cards">
                   <Card size="sm" className="onboarding__hero-card">
                     <CardHeader className="gap-1">
-                      <CardTitle>Windows-first</CardTitle>
+                      <CardTitle>{t("onboarding.heroWindowsTitle")}</CardTitle>
                       <CardDescription>
-                        Electron + Monaco + xterm — desktop shell без
-                        браузерных костылей.
+                        {t("onboarding.heroWindowsBody")}
                       </CardDescription>
                     </CardHeader>
                   </Card>
                   <Card size="sm" className="onboarding__hero-card">
                     <CardHeader className="gap-1">
-                      <CardTitle>Без marketplace</CardTitle>
+                      <CardTitle>{t("onboarding.heroNoMarketTitle")}</CardTitle>
                       <CardDescription>
-                        Фокус на агенте и коде, не на магазине расширений.
+                        {t("onboarding.heroNoMarketBody")}
                       </CardDescription>
                     </CardHeader>
                   </Card>
@@ -321,17 +324,16 @@ export function Onboarding() {
             {currentStep === "features" && (
               <section className="onboarding__section">
                 <Badge variant="secondary" className="w-fit font-normal">
-                  Шаг 2 · Режимы
+                  {t("onboarding.badgeFeatures")}
                 </Badge>
-                <h1>Как работает агент</h1>
+                <h1>{t("onboarding.featuresTitle")}</h1>
                 <p className="onboarding__lead">
-                  Два режима — исследование и исполнение. Переключатель в шапке
-                  чата.
+                  {t("onboarding.featuresLead")}
                 </p>
 
                 <div className="onboarding__feature-grid">
-                  {FEATURES.map((f) => (
-                    <Card key={f.title} size="sm" className="onboarding__feature-card">
+                  {features.map((f) => (
+                    <Card key={f.chip} size="sm" className="onboarding__feature-card">
                       <CardHeader className="gap-2">
                         <div className="flex items-center justify-between gap-2">
                           <div className="onboarding__feature-icon">
@@ -353,25 +355,27 @@ export function Onboarding() {
             {currentStep === "settings" && (
               <section className="onboarding__section">
                 <Badge variant="secondary" className="w-fit font-normal">
-                  Шаг 3 · Настройки
+                  {t("onboarding.badgeSettings")}
                 </Badge>
-                <h1>Быстрый старт</h1>
+                <h1>{t("onboarding.settingsTitle")}</h1>
                 <p className="onboarding__lead">
-                  Можно сразу настроить тему, язык и права. Потом — в Settings.
+                  {t("onboarding.settingsLead")}
                 </p>
 
                 <div className="onboarding__fields">
                   <div className="flex flex-col gap-2">
-                    <div className="text-sm font-medium">Тема</div>
+                    <div className="text-sm font-medium">
+                      {t("onboarding.theme")}
+                    </div>
                     <p className="text-xs text-muted-foreground">
-                      Меняется сразу, пока ты в онбординге
+                      {t("onboarding.themeHint")}
                     </p>
                     <div className="grid grid-cols-3 gap-2">
                       {(
                         [
-                          ["light", "Светлая"],
-                          ["dark", "Тёмная"],
-                          ["midnight", "Midnight"],
+                          ["light", t("settings.themeLight")],
+                          ["dark", t("settings.themeDark")],
+                          ["midnight", t("settings.themeMidnight")],
                         ] as const
                       ).map(([value, label]) => (
                         <ChoicePill
@@ -390,7 +394,9 @@ export function Onboarding() {
                   <Separator />
 
                   <div className="flex flex-col gap-2">
-                    <div className="text-sm font-medium">Язык интерфейса</div>
+                    <div className="text-sm font-medium">
+                      {t("settings.language")}
+                    </div>
                     <div className="grid grid-cols-2 gap-2">
                       <ChoicePill
                         active={settings.language === "ru"}
@@ -398,7 +404,7 @@ export function Onboarding() {
                           void updateSettings({ language: "ru" as LanguageId })
                         }
                       >
-                        Русский
+                        {t("settings.languageRu")}
                       </ChoicePill>
                       <ChoicePill
                         active={settings.language === "en"}
@@ -406,7 +412,7 @@ export function Onboarding() {
                           void updateSettings({ language: "en" as LanguageId })
                         }
                       >
-                        English
+                        {t("settings.languageEn")}
                       </ChoicePill>
                     </div>
                   </div>
@@ -414,9 +420,11 @@ export function Onboarding() {
                   <Separator />
 
                   <div className="flex flex-col gap-2">
-                    <div className="text-sm font-medium">Права агента</div>
+                    <div className="text-sm font-medium">
+                      {t("onboarding.permissions")}
+                    </div>
                     <p className="text-xs text-muted-foreground">
-                      Рекомендуем ask для новых проектов
+                      {t("onboarding.permissionsHint")}
                     </p>
                     <div className="flex flex-col gap-2">
                       <ChoicePill
@@ -428,10 +436,10 @@ export function Onboarding() {
                         }
                       >
                         <div className="font-medium text-foreground">
-                          Спрашивать перед правками
+                          {t("onboarding.permissionAskTitle")}
                         </div>
                         <div className="mt-0.5 text-xs text-muted-foreground">
-                          Diff → Apply / Reject
+                          {t("onboarding.permissionAskHint")}
                         </div>
                       </ChoicePill>
                       <ChoicePill
@@ -443,10 +451,10 @@ export function Onboarding() {
                         }
                       >
                         <div className="font-medium text-foreground">
-                          Применять сразу
+                          {t("onboarding.permissionAutoTitle")}
                         </div>
                         <div className="mt-0.5 text-xs text-muted-foreground">
-                          Power-user, для доверенных репо
+                          {t("onboarding.permissionAutoHint")}
                         </div>
                       </ChoicePill>
                     </div>
@@ -458,39 +466,35 @@ export function Onboarding() {
             {currentStep === "account" && (
               <section className="onboarding__section">
                 <Badge variant="secondary" className="w-fit font-normal">
-                  Шаг 4 · Аккаунт
+                  {t("onboarding.badgeAccount")}
                 </Badge>
-                <h1>Аккаунт (опционально)</h1>
-                <p className="onboarding__lead">
-                  Можно пропустить — агент и workspace работают локально. Вход
-                  нужен только если пользуешься облачным аккаунтом beide.
-                </p>
+                <h1>{t("onboarding.accountTitle")}</h1>
+                <p className="onboarding__lead">{t("onboarding.accountLead")}</p>
 
                 {!authReady ? (
                   <div className="onboarding__center">
-                    <Spinner size="md" />
+                    <Spinner size="lg" />
                   </div>
                 ) : user && session ? (
                   <Card size="sm">
                     <CardHeader className="flex-row items-center gap-3">
-                      <HeroAvatar>
-                        <HeroAvatar.Fallback>
+                      <Avatar>
+                        <AvatarFallback>
                           {(user.email?.[0] ?? "u").toUpperCase()}
-                        </HeroAvatar.Fallback>
-                      </HeroAvatar>
+                        </AvatarFallback>
+                      </Avatar>
                       <div className="min-w-0">
                         <CardTitle className="truncate text-base">
                           {user.email}
                         </CardTitle>
                         <CardDescription>
-                          Сессия восстановлена. Можно продолжить или сменить
-                          аккаунт.
+                          {t("onboarding.sessionRestored")}
                         </CardDescription>
                       </div>
                     </CardHeader>
                     <CardFooter className="flex flex-wrap gap-2">
                       <Button type="button" onClick={() => complete()}>
-                        Продолжить
+                        {t("onboarding.continue")}
                       </Button>
                       <Button
                         type="button"
@@ -498,21 +502,21 @@ export function Onboarding() {
                         disabled={signingOut}
                         onClick={() => void handleSignOut()}
                       >
-                        {signingOut ? "…" : "Выйти и войти другим"}
+                        {signingOut ? "…" : t("onboarding.signOutSwitch")}
                       </Button>
                     </CardFooter>
                   </Card>
                 ) : (
                   <>
                     {!configured && (
-                      <Alert className="mb-1" status="warning">
-                        <Alert.Indicator />
-                        <Alert.Content>
-                          <Alert.Title>Supabase не настроен</Alert.Title>
-                          <Alert.Description>
-                            Пропусти шаг — IDE работает полностью офлайн.
-                          </Alert.Description>
-                        </Alert.Content>
+                      <Alert className="mb-1" variant="warning">
+                        <IconAlertTriangle stroke={1.75} />
+                        <AlertTitle>
+                          {t("onboarding.supabaseNotConfigured")}
+                        </AlertTitle>
+                        <AlertDescription>
+                          {t("onboarding.supabaseNotConfiguredHint")}
+                        </AlertDescription>
                       </Alert>
                     )}
 
@@ -524,55 +528,57 @@ export function Onboarding() {
                       className="w-full"
                     >
                       <TabsList className="grid w-full grid-cols-2">
-                        <TabsTrigger value="login">Вход</TabsTrigger>
-                        <TabsTrigger value="register">Регистрация</TabsTrigger>
+                        <TabsTrigger value="login">
+                          {t("onboarding.signIn")}
+                        </TabsTrigger>
+                        <TabsTrigger value="register">
+                          {t("onboarding.signUp")}
+                        </TabsTrigger>
                       </TabsList>
                     </Tabs>
 
                     <div className="onboarding__fields mt-1">
-                      <TextField
-                        fullWidth
-                        isDisabled={!configured || authLoading}
-                        name="email"
-                        type="email"
-                        value={email}
-                        variant="secondary"
-                        onChange={setEmail}
-                      >
-                        <HeroLabel>Email</HeroLabel>
-                        <HeroInput
+                      <div className="flex w-full flex-col gap-2">
+                        <Label htmlFor="onboarding-email">
+                          {t("onboarding.email")}
+                        </Label>
+                        <Input
+                          id="onboarding-email"
+                          name="email"
+                          type="email"
+                          value={email}
                           autoComplete="email"
                           placeholder="you@example.com"
+                          disabled={!configured || authLoading}
+                          onChange={(e) => setEmail(e.target.value)}
                         />
-                      </TextField>
+                      </div>
 
-                      <TextField
-                        fullWidth
-                        isDisabled={!configured || authLoading}
-                        name="password"
-                        type="password"
-                        value={password}
-                        variant="secondary"
-                        onChange={setPassword}
-                      >
-                        <HeroLabel>Пароль</HeroLabel>
-                        <HeroInput
+                      <div className="flex w-full flex-col gap-2">
+                        <Label htmlFor="onboarding-password">
+                          {t("onboarding.password")}
+                        </Label>
+                        <Input
+                          id="onboarding-password"
+                          name="password"
+                          type="password"
+                          value={password}
                           autoComplete={
                             authMode === "login"
                               ? "current-password"
                               : "new-password"
                           }
-                          placeholder="минимум 6 символов"
+                          placeholder={t("onboarding.passwordPlaceholder")}
+                          disabled={!configured || authLoading}
+                          onChange={(e) => setPassword(e.target.value)}
                         />
-                      </TextField>
+                      </div>
 
                       {authError && (
-                        <Alert status="danger">
-                          <Alert.Indicator />
-                          <Alert.Content>
-                            <Alert.Title>Не вышло</Alert.Title>
-                            <Alert.Description>{authError}</Alert.Description>
-                          </Alert.Content>
+                        <Alert variant="destructive">
+                          <IconAlertCircle stroke={1.75} />
+                          <AlertTitle>{t("onboarding.authFailed")}</AlertTitle>
+                          <AlertDescription>{authError}</AlertDescription>
                         </Alert>
                       )}
 
@@ -591,8 +597,8 @@ export function Onboarding() {
                         {authLoading
                           ? "…"
                           : authMode === "login"
-                            ? "Войти и начать"
-                            : "Создать и начать"}
+                            ? t("onboarding.signInAndStart")
+                            : t("onboarding.signUpAndStart")}
                       </Button>
                     </div>
                   </>
@@ -604,11 +610,11 @@ export function Onboarding() {
           <footer className="onboarding__footer">
             {idx > 0 ? (
               <Button type="button" variant="ghost" onClick={back}>
-                Назад
+                {t("onboarding.back")}
               </Button>
             ) : (
               <Button type="button" variant="ghost" onClick={() => complete()}>
-                Пропустить всё
+                {t("onboarding.skipAll")}
               </Button>
             )}
 
@@ -619,12 +625,12 @@ export function Onboarding() {
                   variant="outline"
                   onClick={() => complete()}
                 >
-                  Пропустить
+                  {t("onboarding.skip")}
                 </Button>
               )}
               {currentStep !== "account" && (
                 <Button type="button" size="lg" onClick={next}>
-                  Далее
+                  {t("onboarding.next")}
                 </Button>
               )}
             </div>
@@ -632,9 +638,8 @@ export function Onboarding() {
         </Card>
       </div>
 
-      <Modal.Backdrop
-        isOpen={otpOpen}
-        variant="blur"
+      <Dialog
+        open={otpOpen}
         onOpenChange={(open) => {
           setOtpOpen(open);
           if (!open) {
@@ -643,101 +648,83 @@ export function Onboarding() {
           }
         }}
       >
-        <Modal.Container size="sm" placement="center">
-          <Modal.Dialog className="onboarding__otp-dialog">
-            <Modal.CloseTrigger />
-            <Modal.Header>
-              <Modal.Heading>Подтверждение email</Modal.Heading>
-            </Modal.Header>
-            <Modal.Body>
-              <p className="onboarding__otp-lead">
-                Мы отправили 6-значный код на{" "}
-                <strong>{pendingVerifyEmail || email}</strong>.
-              </p>
-              <Form
-                className="onboarding__otp-form"
-                onSubmit={(e) => {
+        <DialogContent className="onboarding__otp-dialog sm:max-w-[400px]">
+          <DialogHeader>
+            <DialogTitle>{t("onboarding.otpTitle")}</DialogTitle>
+          </DialogHeader>
+          <div>
+            <p className="onboarding__otp-lead">
+              {t("onboarding.otpLead")}{" "}
+              <strong>{pendingVerifyEmail || email}</strong>.
+            </p>
+            <form
+              className="onboarding__otp-form"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void submitOtp();
+              }}
+            >
+              <Label htmlFor="onboarding-otp">{t("onboarding.otpLabel")}</Label>
+              <Input
+                id="onboarding-otp"
+                name="otp"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={6}
+                value={otp}
+                placeholder="000000"
+                aria-invalid={Boolean(authError)}
+                className="h-10 text-center font-mono text-base tracking-[0.5em]"
+                onChange={(e) => {
+                  const val = e.target.value.replace(/\D/g, "").slice(0, 6);
+                  setOtp(val);
+                  setOtpComplete(val.length === 6);
+                  clearError();
+                }}
+              />
+
+              {authError && (
+                <Alert variant="destructive" className="mt-2">
+                  <IconAlertCircle stroke={1.75} />
+                  <AlertTitle>{t("onboarding.authFailed")}</AlertTitle>
+                  <AlertDescription>{authError}</AlertDescription>
+                </Alert>
+              )}
+
+              <Button
+                className="mt-3 w-full"
+                size="lg"
+                disabled={!otpComplete || otp.length < 6 || authLoading}
+                type="submit"
+              >
+                {authLoading ? <Spinner size="sm" /> : null}
+                {t("onboarding.otpConfirm")}
+              </Button>
+            </form>
+            <div className="onboarding__otp-resend">
+              <span className="text-sm text-muted-foreground">
+                {t("onboarding.otpNoEmail")}
+              </span>
+              <a
+                className="text-sm text-primary underline-offset-4 hover:underline"
+                href="#"
+                onClick={(e) => {
                   e.preventDefault();
-                  void submitOtp();
+                  const mail = pendingVerifyEmail || email.trim();
+                  if (mail) void resendSignupOtp(mail);
                 }}
               >
-                <HeroLabel>Код из письма</HeroLabel>
-                <InputOTP
-                  maxLength={6}
-                  pattern={REGEXP_ONLY_DIGITS}
-                  value={otp}
-                  variant="secondary"
-                  isInvalid={Boolean(authError)}
-                  onComplete={(code) => {
-                    setOtp(code);
-                    setOtpComplete(true);
-                  }}
-                  onChange={(val) => {
-                    setOtp(val);
-                    setOtpComplete(val.length === 6);
-                    clearError();
-                  }}
-                >
-                  <InputOTP.Group>
-                    <InputOTP.Slot index={0} />
-                    <InputOTP.Slot index={1} />
-                    <InputOTP.Slot index={2} />
-                  </InputOTP.Group>
-                  <InputOTP.Separator />
-                  <InputOTP.Group>
-                    <InputOTP.Slot index={3} />
-                    <InputOTP.Slot index={4} />
-                    <InputOTP.Slot index={5} />
-                  </InputOTP.Group>
-                </InputOTP>
-
-                {authError && (
-                  <Alert status="danger" className="mt-2">
-                    <Alert.Indicator />
-                    <Alert.Content>
-                      <Alert.Title>Не вышло</Alert.Title>
-                      <Alert.Description>{authError}</Alert.Description>
-                    </Alert.Content>
-                  </Alert>
-                )}
-
-                <HeroButton
-                  className="mt-3 w-full"
-                  isDisabled={!otpComplete || otp.length < 6}
-                  isPending={authLoading}
-                  type="submit"
-                >
-                  {({ isPending }) => (
-                    <>
-                      {isPending ? <Spinner color="current" size="sm" /> : null}
-                      Подтвердить
-                    </>
-                  )}
-                </HeroButton>
-              </Form>
-              <div className="onboarding__otp-resend">
-                <span className="text-sm text-muted">Не пришло письмо?</span>
-                <Link
-                  className="text-sm"
-                  href="#"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    const mail = pendingVerifyEmail || email.trim();
-                    if (mail) void resendSignupOtp(mail);
-                  }}
-                >
-                  Отправить снова
-                </Link>
-              </div>
-            </Modal.Body>
-            <Modal.Footer>
-              <HeroButton slot="close" variant="secondary">
-                Закрыть
-              </HeroButton>
-            </Modal.Footer>
-          </Modal.Dialog>
-        </Modal.Container>
-      </Modal.Backdrop>
+                {t("onboarding.otpResend")}
+              </a>
+            </div>
+          </div>
+          <DialogFooter>
+            <DialogClose render={<Button variant="secondary" />}>
+              {t("common.close")}
+            </DialogClose>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

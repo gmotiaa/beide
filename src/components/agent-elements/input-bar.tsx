@@ -1,6 +1,5 @@
-"use client";
-
 import { memo, useState, useCallback, useRef, useEffect } from "react";
+import { useTranslation } from "react-i18next";
 import type { ChatStatus } from "ai";
 import { cn } from "./utils/cn";
 
@@ -52,6 +51,8 @@ export type InputBarProps = {
   onStop: () => void;
   placeholder?: string;
   className?: string;
+  /** id applied to the textarea, so host shortcuts can focus it directly. */
+  textareaId?: string;
 
   // Attachment support
   onAttach?: () => void;
@@ -128,6 +129,7 @@ export const InputBar = memo(function InputBar({
   onStop,
   placeholder,
   className,
+  textareaId,
   onAttach,
   attachedImages = [],
   attachedFiles = [],
@@ -147,6 +149,7 @@ export const InputBar = memo(function InputBar({
   leftActions,
   rightActions,
 }: InputBarProps) {
+  const { t } = useTranslation();
   const [internalInput, setInternalInput] = useState("");
   const [isInfoBarOpen, setIsInfoBarOpen] = useState(true);
   const [dismissedQuestionId, setDismissedQuestionId] = useState<string | null>(
@@ -255,7 +258,7 @@ export const InputBar = memo(function InputBar({
             type="button"
             onClick={handleInfoBarClose}
             className="shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-md text-an-foreground-muted/70 hover:text-an-foreground hover:bg-an-background-secondary"
-            aria-label="Close"
+            aria-label={t("agentElements.close")}
           >
             <IconX className="w-3.5 h-3.5" strokeWidth={2} />
           </button>
@@ -320,7 +323,7 @@ export const InputBar = memo(function InputBar({
         <div className="h-7 border-b border-border px-3 flex items-center justify-between text-xs text-an-tool-color-muted">
           <div className="inline-flex items-center gap-1.5">
             <IconMessageCircleQuestion className="w-3.5 h-3.5" />
-            Question
+            {t("agentElements.question")}
           </div>
           {showQuestionNavigation && (
             <div className="inline-flex items-center gap-1">
@@ -329,19 +332,22 @@ export const InputBar = memo(function InputBar({
                 onClick={handleQuestionPrevious}
                 disabled={!canGoPrev}
                 className="size-5 inline-flex items-center justify-center rounded-[4px] hover:bg-an-background-secondary disabled:opacity-40"
-                aria-label="Previous question"
+                aria-label={t("agentElements.previousQuestion")}
               >
                 <IconChevronUp className="w-3.5 h-3.5" />
               </button>
               <span>
-                {clampedQuestionIndex} of {totalQuestions}
+                {t("agentElements.questionProgress", {
+                  current: clampedQuestionIndex,
+                  total: totalQuestions,
+                })}
               </span>
               <button
                 type="button"
                 onClick={handleQuestionNext}
                 disabled={!canGoNext}
                 className="size-5 inline-flex items-center justify-center rounded-[4px] hover:bg-an-background-secondary disabled:opacity-40"
-                aria-label="Next question"
+                aria-label={t("agentElements.nextQuestion")}
               >
                 <IconChevronDown className="w-3.5 h-3.5" />
               </button>
@@ -505,6 +511,7 @@ export const InputBar = memo(function InputBar({
                 <>
                   <textarea
                     ref={textareaRef}
+                    id={textareaId}
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
                     onKeyDown={handleKeyDown}

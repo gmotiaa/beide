@@ -22,24 +22,33 @@ function loadEnv() {
 loadEnv();
 
 const URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
-const KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY;
+const KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 if (!URL || !KEY) {
-  console.error("Missing SUPABASE_URL / SERVICE_ROLE_KEY in .env");
+  console.error("Missing SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY in .env");
   process.exit(1);
 }
 
 async function api(path, { method = "GET", body } = {}) {
-  const res = await fetch(`${URL}${path}`, {
-    method,
-    headers: {
-      apikey: KEY,
-      Authorization: `Bearer ${KEY}`,
-      "Content-Type": "application/json",
-      Prefer: "return=representation",
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  let res;
+  try {
+    res = await fetch(`${URL}${path}`, {
+      method,
+      headers: {
+        apikey: KEY,
+        Authorization: `Bearer ${KEY}`,
+        "Content-Type": "application/json",
+        Prefer: "return=representation",
+      },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch (e) {
+    // Network failure / timeout: report cleanly instead of an unhandled
+    // rejection with a stack trace (matches supabase-verify.mjs).
+    console.error(`Request failed: ${method} ${path}:`, e?.message ?? e);
+    process.exit(2);
+  }
   const text = await res.text();
   let json;
   try {
@@ -62,12 +71,16 @@ console.log({
   mailer_autoconfirm: settings.json?.mailer_autoconfirm,
 });
 
-// Ensure demo admin user (confirmed)
-const demoEmail = "beide@test.local";
-// test.local might be blocked — use confirmed admin create
+// Ensure demo admin user (confirmed) — credentials from env, not hardcoded
+const demoEmail = process.env.BEIDE_ADMIN_EMAIL;
+const demoPassword = process.env.BEIDE_ADMIN_PASSWORD;
+if (!demoEmail || !demoPassword) {
+  console.error("Missing BEIDE_ADMIN_EMAIL / BEIDE_ADMIN_PASSWORD in .env");
+  process.exit(1);
+}
 const demo = {
-  email: "owner@beide.app",
-  password: "BeideOwner123!",
+  email: demoEmail,
+  password: demoPassword,
   email_confirm: true,
   user_metadata: { display_name: "Beide Owner", app: "beide" },
 };
@@ -117,11 +130,13 @@ if (login.ok) {
     });
     console.log("login2", login2.ok ? "OK" : login2.json);
   } else {
-    console.log("users sample:", users.slice(0, 5).map((u) => u.email));
+    console.log("admin user not found among first 50 users");
   }
 }
 
+// Never echo the password: it would sit in terminal scrollback (and any CI log)
+// in clear text. The credentials live in .env — point there instead.
 console.log("\nDone. Use in app:");
 console.log("  email:", demo.email);
-console.log("  password:", demo.password);
+console.log("  password: (BEIDE_ADMIN_PASSWORD from .env)");
 console.log("  url:", URL);

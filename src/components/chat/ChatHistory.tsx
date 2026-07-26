@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   IconHistory,
   IconMessagePlus,
@@ -25,7 +26,11 @@ import { useChatStore } from "../../stores/chat";
 import { cn } from "../../lib/utils";
 import type { SessionInfo } from "../../lib/types";
 
-function formatWhen(ts: number): string {
+function localeFor(language: string): string {
+  return language?.startsWith("ru") ? "ru-RU" : "en-US";
+}
+
+function formatWhen(ts: number, locale: string): string {
   const d = new Date(ts);
   const now = new Date();
   const sameDay =
@@ -33,12 +38,12 @@ function formatWhen(ts: number): string {
     d.getMonth() === now.getMonth() &&
     d.getDate() === now.getDate();
   if (sameDay) {
-    return d.toLocaleTimeString("ru-RU", {
+    return d.toLocaleTimeString(locale, {
       hour: "2-digit",
       minute: "2-digit",
     });
   }
-  return d.toLocaleDateString("ru-RU", {
+  return d.toLocaleDateString(locale, {
     day: "numeric",
     month: "short",
     hour: "2-digit",
@@ -55,6 +60,7 @@ function SessionRow({
   active: boolean;
   onSelect: () => void;
 }) {
+  const { t, i18n } = useTranslation();
   return (
     <button
       type="button"
@@ -67,23 +73,24 @@ function SessionRow({
     >
       <div className="flex items-start justify-between gap-2">
         <span className="line-clamp-2 text-sm font-medium leading-snug">
-          {session.title || "Новый чат"}
+          {session.title || t("chat.newSession")}
         </span>
         <Badge
           variant="outline"
           className="h-5 shrink-0 px-1.5 text-[10px] font-normal capitalize"
         >
-          {session.mode === "plan" ? "план" : "агент"}
+          {session.mode === "plan" ? t("chat.modePlan") : t("chat.modeAgent")}
         </Badge>
       </div>
       <span className="text-[11px] text-muted-foreground">
-        {formatWhen(session.updatedAt)}
+        {formatWhen(session.updatedAt, localeFor(i18n.language))}
       </span>
     </button>
   );
 }
 
 export function ChatHistory() {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const sessions = useChatStore((s) => s.sessions);
   const sessionsLoading = useChatStore((s) => s.sessionsLoading);
@@ -112,14 +119,14 @@ export function ChatHistory() {
               variant="ghost"
               size="icon-sm"
               className="chat-panel__history-btn"
-              aria-label="История чатов"
+              aria-label={t("chat.history")}
               onClick={() => setOpen(true)}
             >
               <IconHistory className="size-4" stroke={1.5} />
             </Button>
           }
         />
-        <TooltipContent side="bottom">История чатов</TooltipContent>
+        <TooltipContent side="bottom">{t("chat.history")}</TooltipContent>
       </Tooltip>
 
       <Sheet open={open} onOpenChange={setOpen}>
@@ -127,11 +134,9 @@ export function ChatHistory() {
           <SheetHeader className="border-b border-border px-4 py-3">
             <SheetTitle className="flex items-center gap-2">
               <IconMessages className="size-4 text-muted-foreground" />
-              История чатов
+              {t("chat.history")}
             </SheetTitle>
-            <SheetDescription>
-              Сессии workspace · сохраняются локально
-            </SheetDescription>
+            <SheetDescription>{t("chat.historyHint")}</SheetDescription>
           </SheetHeader>
 
           <div className="flex items-center gap-2 px-4 py-3">
@@ -147,7 +152,7 @@ export function ChatHistory() {
               }}
             >
               <IconMessagePlus className="size-4" />
-              Новый чат
+              {t("chat.newSession")}
             </Button>
           </div>
 
@@ -165,9 +170,9 @@ export function ChatHistory() {
 
               {!sessionsLoading && !sorted.length ? (
                 <div className="px-3 py-10 text-center text-sm text-muted-foreground">
-                  Пока нет сохранённых чатов.
+                  {t("chat.historyEmpty")}
                   <br />
-                  Напишите агенту — сессия появится здесь.
+                  {t("chat.historyEmptyHint")}
                 </div>
               ) : null}
 

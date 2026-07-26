@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   IconChevronDown,
   IconChevronUp,
@@ -42,6 +43,7 @@ function formatAnswer(answer: QuestionAnswer) {
 }
 
 export function QuestionTool({ part }: QuestionToolProps) {
+  const { t } = useTranslation();
   const [localIndex, setLocalIndex] = useState(part.input?.questionIndex ?? 1);
   const questions: QuestionConfig[] = part.input?.questions ?? [];
   const totalQuestions = part.input?.totalQuestions ?? questions.length;
@@ -123,7 +125,7 @@ export function QuestionTool({ part }: QuestionToolProps) {
       <div className="h-7 border-b border-border px-3 flex items-center justify-between text-xs text-an-tool-color-muted">
         <div className="inline-flex items-center gap-1.5">
           <IconMessageCircleQuestion className="w-3.5 h-3.5" />
-          Question
+          {t("agentElements.question")}
         </div>
         {showNavigation && (
           <div className="inline-flex items-center gap-1">
@@ -132,19 +134,22 @@ export function QuestionTool({ part }: QuestionToolProps) {
               onClick={goPrev}
               disabled={!canGoPrev}
               className="size-5 inline-flex items-center justify-center rounded-[4px] hover:bg-an-background-secondary disabled:opacity-40"
-              aria-label="Previous question"
+              aria-label={t("agentElements.previousQuestion")}
             >
               <IconChevronUp className="w-3.5 h-3.5" />
             </button>
             <span>
-              {clampedIndex} of {totalQuestions}
+              {t("agentElements.questionProgress", {
+                current: clampedIndex,
+                total: totalQuestions,
+              })}
             </span>
             <button
               type="button"
               onClick={goNext}
               disabled={!canGoNext}
               className="size-5 inline-flex items-center justify-center rounded-[4px] hover:bg-an-background-secondary disabled:opacity-40"
-              aria-label="Next question"
+              aria-label={t("agentElements.nextQuestion")}
             >
               <IconChevronDown className="w-3.5 h-3.5" />
             </button>

@@ -2,7 +2,7 @@
 
 **beide** — desktop IDE с AI-агентом на базе [pi](https://github.com/earendil-works). Сделана в Беларуси. Ощущение как Cursor + VS Code, без лишнего.
 
-Windows-first. Агент по умолчанию — xAI Grok через ваш локальный `~/.pi/agent`.
+Windows-first. Модели выбираются в чате: Anthropic (Claude) и xAI — через логин pi в `~/.pi/agent`, NVIDIA и Google — по ключам из `.env`.
 
 ---
 
@@ -10,7 +10,7 @@ Windows-first. Агент по умолчанию — xAI Grok через ваш
 
 **beide** is a Windows desktop IDE with a built-in AI coding agent (pi SDK). Made in Belarus. Open a folder, edit in Monaco, chat with the agent on the right — Plan mode for research, Agent mode for edits. Permissions default to ask-before-write.
 
-**Requirements:** Node 20+, Windows, pi auth for Grok (`~/.pi/agent`).
+**Requirements:** Node 22+, Windows, pi auth in `~/.pi/agent` (Anthropic / xAI) and/or provider keys in `.env` (NVIDIA / Google).
 
 ```bash
 npm install
@@ -24,10 +24,13 @@ npm run dev
 | | |
 |---|---|
 | OS | Windows 10/11 |
-| Node | **20+** |
-| Auth | pi agent dir: `~/.pi/agent` с настроенным xAI / Grok |
+| Node | **22+** (разработка велась на 24) |
+| Auth | pi agent dir `~/.pi/agent` (Anthropic, xAI) и/или ключи в `.env` (NVIDIA, Google) |
 
-Auth для Grok настраивается один раз через pi (см. [Troubleshooting](#troubleshooting-grok-auth)). beide не хранит API-ключи сам — читает то, что уже лежит в `~/.pi/agent`.
+Anthropic и xAI подключаются один раз через `pi auth login` — beide не хранит их
+ключи сам, а читает то, что уже лежит в `~/.pi/agent`. Ключи NVIDIA и Google
+берутся из `.env` (`BEIDE_NVIDIA_API_KEY`, `BEIDE_GOOGLE_API_KEY`), см.
+[`.env.example`](.env.example). Каталог моделей — `src/lib/models.ts`.
 
 ## Быстрый старт
 
@@ -43,10 +46,11 @@ npm run build
 npm run preview
 ```
 
-Проверка типов:
+Проверка типов и тесты:
 
 ```bash
 npm run typecheck
+npm test
 ```
 
 ## Возможности v0.1
@@ -87,25 +91,26 @@ npm run typecheck
 ```
 electron/     # main process: workspace, agent, permissions, checkpoints
 src/          # React UI: editor, chat, sidebar, settings, terminal
-specs/        # PRODUCT, ARCHITECTURE, MVP checklist
+docs/         # документация для разработчиков и агентов
+specs/        # PRODUCT, ARCHITECTURE, MVP checklist (исторические брифы)
 .beide/       # rules, sessions, checkpoints (локально, в gitignore)
 ```
 
-Подробнее: [`specs/PRODUCT.md`](specs/PRODUCT.md), [`specs/ARCHITECTURE.md`](specs/ARCHITECTURE.md).
+Точка входа для разработчиков и AI-агентов — [`AGENTS.md`](AGENTS.md); оттуда
+ссылки на [`docs/`](docs/): архитектура, IPC, чат и сессии, agent runtime, UI,
+разработка, известные пробелы.
 
-## Troubleshooting: Grok auth
+## Troubleshooting: агент не отвечает
 
 Симптом: чат не стримит / `agent not ready` / ошибка модели.
 
-1. Убедитесь, что pi уже логинился в xAI:
-   ```bash
-   # типичный путь на Windows
-   %USERPROFILE%\.pi\agent
-   ```
-   Там должны быть credentials / model config, которые понимает `@earendil-works/pi-coding-agent`.
-2. Проверьте, что из CLI pi Grok отвечает (если pi установлен глобально).
-3. Перезапустите `npm run dev` после смены auth — main process читает `agentDir` при старте сессии.
-4. В Settings посмотрите label модели (по умолчанию xAI Grok; fallback — первая доступная).
+1. Проверьте, что pi залогинен: `pi auth login` создаёт `~/.pi/agent/auth.json`
+   (на Windows — `%USERPROFILE%\.pi\agent`). Anthropic и xAI берутся только оттуда.
+2. Для NVIDIA / Google проверьте `.env` — без ключа модель этого провайдера
+   недоступна, и beide переключится на первую доступную (в чат придёт warning).
+3. Перезапустите `npm run dev` после смены auth или `.env` — main process читает
+   их при старте сессии.
+4. Откройте папку (workspace): без неё сессии и чекпойнты недоступны.
 5. Корп. proxy / firewall: Electron main ходит в API провайдера напрямую; нужен обычный HTTPS outbound.
 
 beide **не** пишет ключи в репозиторий и **не** дублирует их в `userData` сверх того, что делает pi.

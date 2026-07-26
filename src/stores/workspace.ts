@@ -87,13 +87,30 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   refreshTree: async () => {
-    const { rootPath } = get();
+    const { rootPath, expanded } = get();
     if (!rootPath) return;
     const api = getBeide();
     if (!api) return;
     try {
       const tree = await api.workspace.readDir();
-      set({ tree, childrenCache: {}, expanded: {} });
+      // Keep the expanded set: a watcher event must not collapse the tree.
+      // Only expanded folders are on screen, so only they need fresh children;
+      // the rest lazy-load again when opened.
+      const openPaths = Object.keys(expanded).filter((p) => expanded[p]);
+      const loaded = await Promise.all(
+        openPaths.map(async (p) => {
+          try {
+            return [p, await api.workspace.readDir(p)] as const;
+          } catch {
+            return null;
+          }
+        }),
+      );
+      const childrenCache: Record<string, FileNode[]> = {};
+      for (const entry of loaded) {
+        if (entry) childrenCache[entry[0]] = entry[1];
+      }
+      set({ tree, childrenCache });
     } catch (e) {
       set({ error: e instanceof Error ? e.message : String(e) });
     }

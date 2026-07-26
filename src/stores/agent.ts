@@ -1,6 +1,12 @@
 import { create } from "zustand";
-import type { AgentMode, AgentPromptPayload, PermissionRequest } from "../lib/types";
+import type {
+  AgentMode,
+  AgentPromptPayload,
+  PermissionRequest,
+  ProviderStatus,
+} from "../lib/types";
 import { getBeide, onBeide } from "../lib/ipc";
+import i18n from "../i18n";
 import { useChatStore } from "./chat";
 import { useEditorStore } from "./editor";
 import { useSettingsStore } from "./settings";
@@ -14,6 +20,8 @@ export type AgentEventPayload = {
   type?: string;
   event?: string;
   kind?: string;
+  /** Session file the emitting turn belongs to (tagged by main). */
+  beideSessionId?: string;
   delta?: string;
   text?: string;
   content?: string;
@@ -40,17 +48,21 @@ interface AgentState {
   ready: boolean;
   model?: string;
   permission: PermissionRequest | null;
+  /** Provider credential status; empty until the first refresh resolves. */
+  providers: ProviderStatus[];
   unsub: (() => void) | null;
 
   init: () => void;
   dispose: () => void;
   setMode: (mode: AgentMode) => Promise<void>;
+  setModel: (model: string) => void;
   send: (text?: string) => Promise<void>;
   abort: () => Promise<void>;
   respondPermission: (allow: boolean, content?: string) => Promise<void>;
   handleEvent: (raw: unknown) => void;
   handlePermission: (raw: unknown) => void;
   refreshStatus: () => Promise<void>;
+  refreshProviders: () => Promise<void>;
 }
 
 function eventType(raw: AgentEventPayload): string {
@@ -152,6 +164,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
   ready: false,
   model: undefined,
   permission: null,
+  providers: [],
   unsub: null,
 
   init: () => {
@@ -179,6 +192,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
     const defaults = useSettingsStore.getState().settings.defaultAgentMode;
     set({ mode: defaults });
     void get().refreshStatus();
+    void get().refreshProviders();
   },
 
   dispose: () => {
@@ -194,14 +208,37 @@ export const useAgentStore = create<AgentState>((set, get) => ({
     }
     try {
       const status = await api.agent.getStatus();
+      // The backend forgets the model between launches — restore the saved one
+      // instead of resetting the picker to a hardcoded default.
+      const settings = useSettingsStore.getState();
+      if (!settings.loaded) await settings.load();
+      const model =
+        status.model || get().model || useSettingsStore.getState().settings.modelLabel;
       set({
         ready: status.ready,
         streaming: status.streaming,
         mode: status.mode,
-        model: status.model,
+        model,
       });
+      if (!status.model) {
+        try {
+          await api.agent.setModel(model);
+        } catch {
+          /* non-fatal */
+        }
+      }
     } catch {
       set({ ready: false });
+    }
+  },
+
+  refreshProviders: async () => {
+    const api = getBeide();
+    if (!api) return;
+    try {
+      set({ providers: await api.agent.getProviders() });
+    } catch {
+      /* the picker falls back to showing every model */
     }
   },
 
@@ -216,6 +253,19 @@ export const useAgentStore = create<AgentState>((set, get) => ({
     }
   },
 
+  setModel: async (model) => {
+    set({ model });
+    // Survives restarts — the backend does not remember the choice.
+    void useSettingsStore.getState().update({ modelLabel: model });
+    const api = getBeide();
+    if (!api) return;
+    try {
+      await api.agent.setModel(model);
+    } catch {
+      /* keep local model */
+    }
+  },
+
   send: async (text) => {
     const chat = useChatStore.getState();
     const editor = useEditorStore.getState();
@@ -227,9 +277,15 @@ export const useAgentStore = create<AgentState>((set, get) => ({
 
     // Token charge: Supabase when signed in, else local (Electron/userData)
     const usage = useUsageStore.getState();
-    const gate = await usage.recordPrompt(content || "(image)");
+    let gate: { ok: boolean; reason?: string };
+    try {
+      gate = await usage.recordPrompt(content || "(image)");
+    } catch {
+      // Metering is bookkeeping — a broken usage.json must not block sending.
+      gate = { ok: true };
+    }
     if (!gate.ok) {
-      chat.setError(gate.reason ?? "Лимит токенов исчерпан");
+      chat.setError(gate.reason ?? i18n.t("settings.chatLimitError"));
       return;
     }
 
@@ -244,6 +300,9 @@ export const useAgentStore = create<AgentState>((set, get) => ({
       mentions,
       images,
       activeFile: editor.activePath ?? undefined,
+      activeFileContent: editor.activePath
+        ? editor.tabs.find((tab) => tab.path === editor.activePath)?.content
+        : undefined,
       openFiles: editor.tabs.map((t) => t.path),
     };
 
@@ -288,16 +347,17 @@ export const useAgentStore = create<AgentState>((set, get) => ({
         /* ignore */
       }
     }
+    // Read state only after the await — tools can start or settle during it.
     const chat = useChatStore.getState();
     chat.finalizeThinking();
     // Mark any running tools as interrupted
-    for (const m of chat.messages) {
+    for (const m of useChatStore.getState().messages) {
       if (m.role === "tool" && m.toolStatus === "running") {
         chat.upsertToolMessage({
           id: m.id,
           toolName: m.toolName ?? "tool",
           status: "error",
-          detail: m.toolDetail || "прервано",
+          detail: m.toolDetail || i18n.t("chat.interrupted"),
           args: m.toolArgs,
         });
       }
@@ -330,6 +390,17 @@ export const useAgentStore = create<AgentState>((set, get) => ({
     const chat = useChatStore.getState();
     const r = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
 
+    // A turn keeps streaming after the user switches chats. Its events are
+    // tagged with the session they belong to; letting them through appended
+    // the tail of the old answer to the newly opened transcript — and the
+    // save that followed overwrote that session's file with it. Global
+    // status/model/warning events still apply (guarded individually below).
+    const evSession = typeof r.beideSessionId === "string" ? r.beideSessionId : null;
+    const foreign = Boolean(evSession && chat.sessionId && evSession !== chat.sessionId);
+    const globalType =
+      type.startsWith("beide") || type === "model_select" || type === "error" || type === "auto_retry_end";
+    if (foreign && !globalType) return;
+
     // pi SDK: message_update + assistantMessageEvent.text_delta
     if (type === "message_update") {
       const ame = (
@@ -359,19 +430,18 @@ export const useAgentStore = create<AgentState>((set, get) => ({
         }
         return;
       }
-      if (ameType.includes("thinking")) {
-        const delta =
-          typeof ame?.delta === "string"
-            ? ame.delta
-            : typeof ame?.content === "string"
-              ? ame.content
-              : typeof ame?.text === "string"
-                ? ame.text
-                : "";
-        if (delta) {
-          chat.appendThinkingDelta(delta);
+      // pi emits thinking_start → thinking_delta* → thinking_end, where
+      // thinking_end carries `content` with the WHOLE thought. Appending that
+      // on top of the deltas printed the entire reasoning block twice.
+      if (ameType === "thinking_delta") {
+        if (typeof ame?.delta === "string" && ame.delta) {
+          chat.appendThinkingDelta(ame.delta);
           set({ streaming: true });
         }
+        return;
+      }
+      if (ameType === "thinking_end") {
+        chat.finalizeThinking();
         return;
       }
       return;
@@ -480,8 +550,9 @@ export const useAgentStore = create<AgentState>((set, get) => ({
       const args = { ...prevArgs, ...extractToolArgs(r) };
       const isError = Boolean(r.isError ?? r.error);
       const result = r.result ?? r.output ?? r.data;
-      let detail = formatToolDetail(toolName, args, result);
-      if (!detail && isError) detail = "ошибка";
+      // No placeholder detail on errors — status "error" already renders as
+      // such, and a literal string here becomes protocol the UI must filter.
+      const detail = formatToolDetail(toolName, args, result);
       chat.upsertToolMessage({
         id: toolCallId,
         toolName,
@@ -525,16 +596,33 @@ export const useAgentStore = create<AgentState>((set, get) => ({
       return;
     }
 
+    if (type === "beide_warning" || type === "beide:warning") {
+      const msg = String(r.message ?? r.description ?? "");
+      if (msg) {
+        chat.setError(msg);
+        // A warning from another session's turn must not write into the open
+        // transcript — the banner above is enough.
+        if (!foreign) {
+          chat.appendAssistantDelta(`\n\n**⚠️ ${msg}**`);
+          chat.finalizeAssistant();
+          set({ streaming: false });
+        }
+      }
+      return;
+    }
+
     if (type === "error" || type === "auto_retry_end") {
       if (type === "auto_retry_end" && (r as { success?: boolean }).success) return;
       const err = String(
         r.error ?? r.errorMessage ?? r.finalError ?? "Agent error",
       );
       chat.setError(err);
-      chat.appendAssistantDelta(`\n\n**Error:** ${err}`);
-      chat.finalizeThinking();
-      chat.finalizeAssistant();
-      set({ streaming: false });
+      if (!foreign) {
+        chat.appendAssistantDelta(`\n\n**Error:** ${err}`);
+        chat.finalizeThinking();
+        chat.finalizeAssistant();
+        set({ streaming: false });
+      }
       return;
     }
 

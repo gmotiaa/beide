@@ -1,6 +1,11 @@
 /* ═══════════════════════════════════════════════════════════
-   beide — Light studio (default white + soft radius)
-   Clean product UI. Agent Elements keep their native look.
+   beide — design tokens
+
+   One palette drives everything: the IDE shell, the shadcn
+   primitives (mapped in global.css @theme inline) and the agent
+   chat (--an-*). Themes only override the palette block; every
+   derived token below resolves from it, so a new theme never has
+   to restate shadows, fields, scrollbars or chat colours.
    ═══════════════════════════════════════════════════════════ */
 
 :root {
@@ -19,205 +24,239 @@
   --status-h: 24px;
 }
 
-/* ── Light (DEFAULT) ────────────────────────────────────── */
+/* ── Light — "mineral" ───────────────────────────────────
+   Limestone ground, bone panels, oxidized-copper accent. The
+   ground is deliberately warm and slightly darker than the
+   panels so the inset workspace reads as recessed stone. */
 :root,
 :root[data-theme="light"] {
-  --bg: #f7f7f8;
-  --bg-elevated: #ffffff;
-  --bg-glow: none;
-  --panel: #ffffff;
-  --panel-hover: #f0f0f3;
-  --panel-active: #e8e8ee;
-  --panel-glass: rgba(255, 255, 255, 0.86);
-  /* beide layout tokens — keep namespaced; do not replace HeroUI --border/--muted */
-  --border: #e4e4e9;
-  --border-subtle: #ececf1;
-  --border-strong: #d0d0d8;
-  --text: #111114;
-  --text-muted: #6b6b76;
-  --text-faint: #9b9ba8;
-  /* Brand purple — also feeds HeroUI --accent after cascade */
-  --accent: #5b5bd6;
-  --accent-2: #7c7cf0;
-  --accent-hover: #4f4fc9;
-  --accent-muted: rgba(91, 91, 214, 0.1);
-  --accent-border: rgba(91, 91, 214, 0.28);
-  --accent-glow: 0 8px 24px rgba(91, 91, 214, 0.18);
-  /* Keep HeroUI text/button tokens readable on light surfaces */
-  --accent-foreground: #ffffff;
-  --foreground: #111114;
-  /* HeroUI --muted is TEXT color (not a fill) */
-  --muted: #6b6b76;
-  --field-foreground: #111114;
-  --field-placeholder: #9b9ba8;
-  --field-background: #ffffff;
-  --field-border: #e4e4e9;
-  --field-border-width: 1px;
-  --default: #f0f0f3;
-  --default-foreground: #111114;
-  --default-hover: #e8e8ee;
-  --surface: #ffffff;
-  --surface-foreground: #111114;
-  --surface-secondary: #f0f0f3;
-  --surface-secondary-foreground: #111114;
-  --danger: #e11d48;
-  --danger-muted: rgba(225, 29, 72, 0.08);
-  --success: #16a34a;
-  --warning: #ca8a04;
-  --phosphor: #374151;
-  --scrollbar: #d8d8e0;
-  --scrollbar-hover: #c0c0ca;
-  --titlebar: #fbfbfd;
-  --shadow: 0 12px 40px rgba(15, 15, 25, 0.08);
-  --shadow-sm: 0 1px 2px rgba(15, 15, 25, 0.04), 0 4px 12px rgba(15, 15, 25, 0.04);
-  --monaco-bg: #ffffff;
-  --code-bg: #f4f4f7;
-  --user-bubble: #f0f0ff;
-  --assistant-bubble: transparent;
-  --focus-ring: 0 0 0 3px rgba(91, 91, 214, 0.2);
-  --hairline: 1px solid var(--border);
+  color-scheme: light;
+
+  --bg: #edeae4;
+  --bg-elevated: #fdfcfa;
+  --panel: #fbfaf7;
+  --panel-hover: #f1eee8;
+  --panel-active: #e5e1d8;
+  --panel-glass: rgba(251, 250, 247, 0.82);
+  --titlebar: #f6f3ed;
+
+  --border: #dedad1;
+  --border-subtle: #ebe7df;
+  --border-strong: #c9c4b8;
+
+  --text: #22252a;
+  --text-muted: #6e7379;
+  --text-faint: #9a9c99;
+
+  --accent: #2e7d6b;
+  --accent-2: #3e9c86;
+  --accent-hover: #276a5b;
+  --accent-contrast: #fbfaf7;
+
+  --danger: #a6412c;
+  --success: #4c7a4f;
+  --warning: #b07d22;
+
+  --code-bg: #f4f1ea;
+  --user-bubble: #e2ede9;
+
+  --shadow-color: 42 38 30;
+  --shadow-strength: 0.09;
 }
 
-/* ── Dark (optional) ────────────────────────────────────── */
+/* ── Dark — basalt ───────────────────────────────────────── */
 :root[data-theme="dark"],
 .dark {
-  --bg: #0f0f12;
-  --bg-elevated: #16161a;
-  --panel: #18181c;
-  --panel-hover: #222228;
-  --panel-active: #2a2a32;
-  --panel-glass: rgba(24, 24, 28, 0.88);
-  --border: #2a2a32;
-  --border-subtle: #222228;
-  --border-strong: #3a3a46;
-  --text: #f4f4f7;
-  --text-muted: #a1a1b0;
-  --text-faint: #6b6b78;
-  --accent: #8b8bf0;
-  --accent-2: #a5a5ff;
-  --accent-hover: #9c9cf5;
-  --accent-muted: rgba(139, 139, 240, 0.16);
-  --accent-border: rgba(139, 139, 240, 0.35);
-  --accent-glow: 0 8px 28px rgba(139, 139, 240, 0.2);
-  --accent-foreground: #ffffff;
-  --foreground: #f4f4f7;
-  --muted: #a1a1b0;
-  --field-foreground: #f4f4f7;
-  --field-placeholder: #6b6b78;
-  --field-background: #18181c;
-  --field-border: #2a2a32;
-  --field-border-width: 1px;
-  --default: #222228;
-  --default-foreground: #f4f4f7;
-  --default-hover: #2a2a32;
-  --surface: #18181c;
-  --surface-foreground: #f4f4f7;
-  --surface-secondary: #222228;
-  --surface-secondary-foreground: #f4f4f7;
-  --danger: #fb7185;
-  --danger-muted: rgba(251, 113, 133, 0.12);
-  --success: #4ade80;
-  --warning: #fbbf24;
-  --phosphor: #d4d4d8;
-  --scrollbar: #2a2a32;
-  --scrollbar-hover: #3a3a46;
-  --titlebar: #18181c;
-  --shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
-  --shadow-sm: 0 1px 0 rgba(255, 255, 255, 0.04) inset;
-  --monaco-bg: #0f0f12;
-  --code-bg: #121216;
-  --user-bubble: #22223a;
-  --assistant-bubble: transparent;
-  --focus-ring: 0 0 0 3px rgba(139, 139, 240, 0.25);
-  --hairline: 1px solid var(--border);
+  color-scheme: dark;
+
+  --bg: #141618;
+  --bg-elevated: #1a1d1f;
+  --panel: #1c1f21;
+  --panel-hover: #24282a;
+  --panel-active: #2d3235;
+  --panel-glass: rgba(28, 31, 33, 0.84);
+  --titlebar: #17191b;
+
+  --border: #2b2f31;
+  --border-subtle: #232728;
+  --border-strong: #3b4143;
+
+  --text: #e9e7e2;
+  --text-muted: #979c9d;
+  --text-faint: #676c6e;
+
+  --accent: #4fa88f;
+  --accent-2: #6bc0a8;
+  --accent-hover: #5cb89d;
+  --accent-contrast: #0f1d1a;
+
+  --danger: #d2694e;
+  --success: #82b173;
+  --warning: #d2a047;
+
+  --code-bg: #121415;
+  --user-bubble: #1e3833;
+
+  --shadow-color: 0 0 0;
+  --shadow-strength: 0.5;
 }
 
+/* ── Midnight — obsidian ─────────────────────────────────
+   Deeper, glassier dark with a livelier patina. Only the
+   palette differs — everything derived is inherited from the
+   shared block below, which is what previously broke:
+   midnight used to fall back to the LIGHT field/scrollbar/
+   shadow values. */
 :root[data-theme="midnight"] {
-  --bg: #0a0a10;
-  --bg-elevated: #101018;
-  --panel: #12121c;
-  --panel-hover: #1a1a28;
-  --panel-active: #222234;
-  --border: #24243a;
-  --border-subtle: #1a1a2a;
-  --border-strong: #343450;
-  --text: #eeeef6;
-  --text-muted: #9a9ab4;
-  --text-faint: #64648a;
-  --accent: #9b8cff;
-  --accent-2: #b4a8ff;
-  --accent-hover: #aea0ff;
-  --accent-muted: rgba(155, 140, 255, 0.16);
-  --accent-border: rgba(155, 140, 255, 0.4);
-  --titlebar: #0c0c14;
-  --monaco-bg: #0a0a10;
-  --code-bg: #0e0e18;
-  --user-bubble: #1c1830;
+  color-scheme: dark;
+
+  --bg: #0c0e10;
+  --bg-elevated: #121517;
+  --panel: #141719;
+  --panel-hover: #1c2022;
+  --panel-active: #262b2d;
+  --panel-glass: rgba(20, 23, 25, 0.86);
+  --titlebar: #0e1113;
+
+  --border: #22272a;
+  --border-subtle: #1a1e20;
+  --border-strong: #333a3d;
+
+  --text: #efede8;
+  --text-muted: #9aa0a1;
+  --text-faint: #646a6c;
+
+  --accent: #5fbfa3;
+  --accent-2: #7dd4bb;
+  --accent-hover: #6ecbb0;
+  --accent-contrast: #0a1613;
+
+  --danger: #de7458;
+  --success: #8cbc7c;
+  --warning: #ddaa4d;
+
+  --code-bg: #0a0c0d;
+  --user-bubble: #17322c;
+
+  --shadow-color: 0 0 0;
+  --shadow-strength: 0.55;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   Derived tokens — resolve from the palette above, so they are
+   correct in every theme automatically.
+   ═══════════════════════════════════════════════════════════ */
+:root {
+  --accent-muted: color-mix(in oklch, var(--accent) 12%, transparent);
+  --accent-border: color-mix(in oklch, var(--accent) 32%, transparent);
+  --accent-glow: 0 8px 26px color-mix(in oklch, var(--accent) 22%, transparent);
+  --danger-muted: color-mix(in oklch, var(--danger) 12%, transparent);
+  --success-muted: color-mix(in oklch, var(--success) 12%, transparent);
+  --warning-muted: color-mix(in oklch, var(--warning) 14%, transparent);
+
+  --field-background: var(--bg-elevated);
+  --field-border: var(--border);
+  --field-foreground: var(--text);
+  --field-placeholder: var(--text-faint);
+
+  --scrollbar: color-mix(in oklch, var(--text) 18%, transparent);
+  --scrollbar-hover: color-mix(in oklch, var(--text) 32%, transparent);
+
+  /* Matches "editor.background" in the Monaco themes (EditorArea.tsx) so the
+     host element does not flash a different tone before Monaco paints. */
+  --monaco-bg: var(--panel);
+  --assistant-bubble: transparent;
+
+  --shadow-sm: 0 1px 2px rgb(var(--shadow-color) / calc(var(--shadow-strength) * 0.5)),
+    0 4px 12px rgb(var(--shadow-color) / calc(var(--shadow-strength) * 0.5));
+  --shadow: 0 12px 40px rgb(var(--shadow-color) / var(--shadow-strength));
+  --shadow-lg: 0 24px 64px rgb(var(--shadow-color) / calc(var(--shadow-strength) * 1.2));
+
+  --focus-ring: 0 0 0 3px color-mix(in oklch, var(--accent) 22%, transparent);
   --hairline: 1px solid var(--border);
 }
 
-/* ── Agent Elements tokens (match AE docs — light first) ─ */
-:root,
-:root[data-theme="light"] {
-  --an-border-radius: 16px;
-  --an-max-width: 100%;
-  --an-message-border-radius: 16px;
-  --an-input-border-radius: 16px;
-  --an-tool-border-radius: 10px;
-  --an-background: #ffffff;
-  --an-background-secondary: #f0f0f0;
-  --an-background-tertiary: #f8f8f8;
-  --an-foreground: #1a1a1a;
-  --an-foreground-muted: #737373;
-  --an-foreground-subtle: #a3a3a3;
-  --an-border-color: #e4e4e7;
-  --an-primary-color: #5b5bd6;
-  --an-user-message-bg: #f4f4f5;
-  --an-user-message-text: #1a1a1a;
-  --an-input-background: #ffffff;
-  --an-input-border-color: #e4e4e7;
-  --an-input-color: #1a1a1a;
-  --an-input-placeholder-color: #a3a3a3;
-  --an-send-button-bg: #5b5bd6;
-  --an-send-button-color: #ffffff;
-  --an-tool-background: #f5f5f5;
-  --an-tool-border-color: #e4e4e7;
-  --an-tool-color: #1a1a1a;
-  --an-tool-color-muted: #737373;
-  --an-code-background: #1e1e1e;
-  --an-code-color: #d4d4d4;
-  --an-context-padding: 12px;
+/* ── shadcn raw token names ───────────────────────────────
+   global.css maps these onto Tailwind utilities via @theme
+   inline, but generated shadcn components also reference the
+   raw custom properties directly (e.g. button.tsx does
+   color-mix(..., var(--foreground) ...)). Aliasing them here
+   means anything pulled in with `shadcn add` works unedited. */
+:root {
+  --background: var(--bg);
+  --foreground: var(--text);
+  --card: var(--panel);
+  --card-foreground: var(--text);
+  --popover: var(--bg-elevated);
+  --popover-foreground: var(--text);
+  --primary: var(--accent);
+  --primary-foreground: var(--accent-contrast);
+  --secondary: var(--panel-hover);
+  --secondary-foreground: var(--text);
+  --muted: var(--panel-hover);
+  --muted-foreground: var(--text-muted);
+  --destructive: var(--danger);
+  --destructive-foreground: var(--accent-contrast);
+  --input: var(--border);
+  --ring: var(--accent);
 }
 
-:root[data-theme="dark"],
-:root[data-theme="midnight"],
+/* ── Agent chat (Agent Elements) ──────────────────────────
+   Derived from the same palette so the chat panel stops
+   reading as a separate application pasted into the IDE.
+
+   agent-ui.css ships its own defaults on `html[data-theme="dark"]`,
+   which outranks a bare `:root`. The selector list below matches or
+   beats it in every theme, so these stay authoritative — otherwise
+   light theme would take ours and dark theme the vendor's, which is
+   how the two drifted apart in the first place. */
+:root,
+:root[data-theme],
 .dark {
-  --an-border-radius: 16px;
-  --an-message-border-radius: 16px;
-  --an-input-border-radius: 16px;
-  --an-tool-border-radius: 10px;
+  --an-border-radius: var(--radius-lg);
+  --an-message-border-radius: var(--radius-lg);
+  --an-input-border-radius: var(--radius-lg);
+  --an-tool-border-radius: var(--radius-sm);
   --an-max-width: 100%;
-  --an-background: #0a0a0a;
-  --an-background-secondary: #242424;
-  --an-background-tertiary: #141414;
-  --an-foreground: #fafafa;
-  --an-foreground-muted: #8c8c8c;
-  --an-foreground-subtle: #71717a;
-  --an-border-color: #2a2a2a;
-  --an-primary-color: #8b8bf0;
-  --an-user-message-bg: #1a1a1a;
-  --an-user-message-text: #fafafa;
-  --an-input-background: #0a0a0a;
-  --an-input-border-color: #2a2a2a;
-  --an-input-color: #fafafa;
-  --an-input-placeholder-color: #71717a;
-  --an-send-button-bg: #8b8bf0;
-  --an-send-button-color: #0a0a0a;
-  --an-tool-background: #141414;
-  --an-tool-border-color: #2a2a2a;
-  --an-tool-color: #fafafa;
-  --an-tool-color-muted: #8c8c8c;
-  --an-code-background: #0a0a0a;
-  --an-code-color: #d4d4d4;
   --an-context-padding: 12px;
+
+  --an-background: var(--panel);
+  --an-background-secondary: var(--panel-hover);
+  --an-background-tertiary: var(--bg);
+  --an-foreground: var(--text);
+  --an-foreground-muted: var(--text-muted);
+  --an-foreground-subtle: var(--text-faint);
+  --an-border-color: var(--border);
+  --an-primary-color: var(--accent);
+
+  --an-user-message-bg: var(--user-bubble);
+  --an-user-message-text: var(--text);
+
+  --an-input-background: var(--field-background);
+  --an-input-border-color: var(--field-border);
+  --an-input-color: var(--field-foreground);
+  --an-input-placeholder-color: var(--field-placeholder);
+
+  --an-send-button-bg: var(--accent);
+  --an-send-button-color: var(--accent-contrast);
+
+  --an-tool-background: var(--bg);
+  --an-tool-border-color: var(--border-subtle);
+  --an-tool-color: var(--text);
+  --an-tool-color-muted: var(--text-muted);
+
+  --an-code-background: var(--code-bg);
+  --an-code-color: var(--text);
+
+  --an-input-focus-outline: color-mix(in oklch, var(--accent) 30%, transparent);
+  --an-message-radius-inner-offset: 4px;
+
+  /* Diff colours were fixed light-theme values, so removed lines read as
+     near-black on dark. Derive them from the semantic tokens instead. */
+  --an-diff-added-bg: color-mix(in oklch, var(--success) 12%, transparent);
+  --an-diff-added-border: color-mix(in oklch, var(--success) 45%, transparent);
+  --an-diff-added-text: var(--success);
+  --an-diff-removed-bg: color-mix(in oklch, var(--danger) 12%, transparent);
+  --an-diff-removed-border: color-mix(in oklch, var(--danger) 45%, transparent);
+  --an-diff-removed-text: var(--danger);
 }

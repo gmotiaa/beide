@@ -115,11 +115,9 @@ export class SessionService {
         // fall through
       }
     }
-    const list = await this.list();
-    if (list[0]) {
-      this.activeId = list[0].id;
-      return list[0];
-    }
+    // No active id (fresh launch, or the active session was deleted) — start a
+    // new chat. Adopting the most recently updated session would silently
+    // append the first prompt to an unrelated conversation.
     return this.create(mode);
   }
 

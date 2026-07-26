@@ -5,6 +5,7 @@ import {
   IconHistory,
   IconLanguage,
   IconPalette,
+  IconPlugConnected,
   IconRobot,
   IconShield,
   IconSparkles,
@@ -96,6 +97,7 @@ function RemainingCard({
   resetLabel: string;
   detail?: string;
 }) {
+  const { t } = useTranslation();
   const empty = remaining <= 0.05;
   const low = remaining > 0 && remaining < 25;
   return (
@@ -109,7 +111,9 @@ function RemainingCard({
         )}
       >
         {Math.round(remaining)} %{" "}
-        <span className="usage-limit-card__pct-label">осталось</span>
+        <span className="usage-limit-card__pct-label">
+          {t("settings.remaining")}
+        </span>
       </div>
       {detail ? (
         <div className="usage-limit-card__detail tabular-nums">{detail}</div>
@@ -121,11 +125,13 @@ function RemainingCard({
           empty && "[&_[data-slot=progress-indicator]]:bg-muted-foreground/30",
           !empty &&
             !low &&
-            "[&_[data-slot=progress-indicator]]:bg-emerald-500",
-          low && "[&_[data-slot=progress-indicator]]:bg-amber-500",
+            "[&_[data-slot=progress-indicator]]:bg-[color:var(--success)]",
+          low && "[&_[data-slot=progress-indicator]]:bg-[color:var(--warning)]",
         )}
       />
-      <div className="usage-limit-card__reset">Сброс {resetLabel}</div>
+      <div className="usage-limit-card__reset">
+        {t("settings.resetAt", { time: resetLabel })}
+      </div>
     </div>
   );
 }
@@ -138,20 +144,22 @@ export function SettingsView() {
   const refreshCheckpoints = useSettingsStore((s) => s.refreshCheckpoints);
   const restoreCheckpoint = useSettingsStore((s) => s.restoreCheckpoint);
   const modelFromAgent = useAgentStore((s) => s.model);
+  const providers = useAgentStore((s) => s.providers);
+  const refreshProviders = useAgentStore((s) => s.refreshProviders);
   const resetOnboarding = useOnboardingStore((s) => s.reset);
   const user = useAuthStore((s) => s.user);
   const usageData = useUsageStore((s) => s.data);
   const usageSource = useUsageStore((s) => s.source);
   const accountEmail = useUsageStore((s) => s.accountEmail);
   const loadUsage = useUsageStore((s) => s.load);
-  const setPlan = useUsageStore((s) => s.setPlan);
-  const addCredits = useUsageStore((s) => s.addCredits);
-  const resetToday = useUsageStore((s) => s.resetToday);
 
   useEffect(() => {
     void refreshCheckpoints();
     void loadUsage();
-  }, [refreshCheckpoints, loadUsage]);
+    // Credentials can change outside the app (`pi auth login` in a terminal),
+    // so re-read them every time the screen opens.
+    void refreshProviders();
+  }, [refreshCheckpoints, loadUsage, refreshProviders]);
 
   const limits = PLANS[usageData.plan];
   const h5Left = remainingPct(usageData.h5.used, limits.tokens5h);
@@ -169,7 +177,6 @@ export function SettingsView() {
     () => formatResetIn(msUntil(usageData.h5.endsAt)),
     [usageData.h5.endsAt, usageData.h5.used],
   );
-  const isRu = i18n.language?.startsWith("ru");
   const fmtTok = (n: number) =>
     n >= 1000 ? `${Math.round(n / 1000)}k` : String(n);
 
@@ -183,11 +190,7 @@ export function SettingsView() {
             </div>
             <div>
               <h1>{t("settings.title")}</h1>
-              <p className="settings-view__lead">
-                {isRu
-                  ? "Внешний вид, агент, лимиты аккаунта и чекпоинты."
-                  : "Appearance, agent, account limits, and checkpoints."}
-              </p>
+              <p className="settings-view__lead">{t("settings.lead")}</p>
             </div>
           </div>
           <Badge variant="secondary" className="font-normal">
@@ -258,14 +261,6 @@ export function SettingsView() {
                     <Button
                       type="button"
                       size="sm"
-                      variant="outline"
-                      onClick={() => void setPlan("pro")}
-                    >
-                      Pro
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
                       variant="secondary"
                       onClick={() => void loadUsage()}
                     >
@@ -324,15 +319,6 @@ export function SettingsView() {
                     <p className="text-xs leading-snug text-muted-foreground">
                       {t("settings.creditsHint")}
                     </p>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      className="mt-auto w-fit"
-                      onClick={() => void addCredits(10_000)}
-                    >
-                      {t("settings.addCredits")}
-                    </Button>
                   </div>
                 </div>
               </div>
@@ -346,43 +332,34 @@ export function SettingsView() {
                     const plan = PLANS[id];
                     const active = usageData.plan === id;
                     return (
-                      <button
+                      <div
                         key={id}
-                        type="button"
                         className={cn(
-                          "settings-choice settings-choice--plan",
-                          active && "settings-choice--active",
+                          "settings-choice settings-choice--plan select-none opacity-90 cursor-default",
+                          active && "settings-choice--active opacity-100",
                         )}
-                        onClick={() => void setPlan(id)}
                       >
                         <span className="settings-choice__label flex items-center gap-1.5">
                           {plan.label}
                           {id === "pro" ? (
                             <IconSparkles className="size-3.5 text-primary" />
                           ) : null}
+                          {active ? (
+                            <Badge variant="secondary" className="ml-auto text-[10px] py-0 h-4">
+                              {t("settings.planActive")}
+                            </Badge>
+                          ) : null}
                         </span>
                         <span className="settings-choice__hint">
-                          {fmtTok(plan.tokens5h)} / 5ч · {fmtTok(plan.tokensWeek)}{" "}
-                          / нед
+                          {t("settings.planQuota", {
+                            h5: fmtTok(plan.tokens5h),
+                            week: fmtTok(plan.tokensWeek),
+                          })}
                         </span>
-                      </button>
+                      </div>
                     );
                   })}
                 </div>
-              </div>
-
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => void resetToday()}
-                >
-                  {t("settings.resetUsage")}
-                </Button>
-                <p className="self-center text-[11px] text-muted-foreground">
-                  {t("settings.resetUsageHint")}
-                </p>
               </div>
             </CardContent>
           </Card>
@@ -393,7 +370,7 @@ export function SettingsView() {
                 <IconPalette className="size-4" stroke={1.75} />
               </div>
               <CardTitle>{t("settings.appearance")}</CardTitle>
-              <CardDescription>Тема и язык интерфейса</CardDescription>
+              <CardDescription>{t("settings.appearanceHint")}</CardDescription>
             </CardHeader>
             <CardContent className="flex flex-col gap-4">
               <div className="flex flex-col gap-2">
@@ -432,9 +409,7 @@ export function SettingsView() {
                 <IconRobot className="size-4" stroke={1.75} />
               </div>
               <CardTitle>{t("settings.agent")}</CardTitle>
-              <CardDescription>
-                Права, режим по умолчанию и метка модели
-              </CardDescription>
+              <CardDescription>{t("settings.agentCardHint")}</CardDescription>
             </CardHeader>
             <CardContent className="flex flex-col gap-4">
               <div className="flex flex-col gap-2">
@@ -491,13 +466,65 @@ export function SettingsView() {
             </CardContent>
           </Card>
 
+          {/* Accounts the agent can actually use. beide holds no tokens of its
+              own — an Anthropic subscription login lives in pi's auth.json and
+              is only reported here. */}
+          <Card size="sm" className="settings-card">
+            <CardHeader className="gap-1">
+              <div className="settings-card__icon">
+                <IconPlugConnected className="size-4" stroke={1.75} />
+              </div>
+              <CardTitle>{t("settings.providers")}</CardTitle>
+              <CardDescription>{t("settings.providersHint")}</CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-3">
+              {providers.length === 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  {t("settings.providersLoading")}
+                </p>
+              ) : (
+                providers.map((p) => (
+                  <div
+                    key={p.id}
+                    className="flex items-center justify-between gap-3"
+                  >
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-medium">
+                        {p.label}
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        {!p.connected
+                          ? t("settings.providerNotConnected")
+                          : p.kind === "oauth"
+                            ? t("settings.providerOauth")
+                            : t("settings.providerApiKey")}
+                      </p>
+                    </div>
+                    <Badge
+                      variant={p.connected ? "default" : "outline"}
+                      className="h-6 shrink-0 px-2 font-normal"
+                    >
+                      {p.connected
+                        ? t("settings.providerReady")
+                        : t("settings.providerNone")}
+                    </Badge>
+                  </div>
+                ))
+              )}
+              <Separator />
+              <p className="text-xs leading-snug text-muted-foreground">
+                {t("settings.providersFootnote")}
+              </p>
+            </CardContent>
+          </Card>
+
           <Card size="sm" className="settings-card">
             <CardHeader className="gap-1">
               <div className="settings-card__icon">
                 <IconShield className="size-4" stroke={1.75} />
               </div>
               <CardTitle>{t("settings.privacy")}</CardTitle>
-              <CardDescription>Телеметрия и подсказки</CardDescription>
+              <CardDescription>{t("settings.privacyHint")}</CardDescription>
             </CardHeader>
             <CardContent className="flex flex-col gap-4">
               <div className="flex items-center justify-between gap-4">
@@ -545,9 +572,7 @@ export function SettingsView() {
                 <IconHistory className="size-4" stroke={1.75} />
               </div>
               <CardTitle>{t("settings.checkpoints")}</CardTitle>
-              <CardDescription>
-                Снимки перед write/edit — можно откатить
-              </CardDescription>
+              <CardDescription>{t("settings.checkpointsHint")}</CardDescription>
             </CardHeader>
             <CardContent>
               {checkpoints.length === 0 ? (
@@ -560,7 +585,7 @@ export function SettingsView() {
                         <strong>{cp.label || cp.id}</strong>
                         <span>
                           {new Date(cp.createdAt).toLocaleString()} ·{" "}
-                          {cp.files.length} files
+                          {t("settings.filesCount", { count: cp.files.length })}
                         </span>
                       </div>
                       <Button

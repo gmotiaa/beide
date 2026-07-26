@@ -233,24 +233,17 @@ html[data-theme="midnight"] {
   font-size: 12px;
 }
 
-.dark .an-edit-tool-card {
-  background-color: #000;
+/* Was pure black, which punched a hole through the panel on any palette that
+   is not #000. --code-bg is the same ground the editor and terminal use, so
+   the diff now reads as inset code rather than a void. */
+.an-edit-tool-card {
+  background-color: var(--code-bg);
 }
 
-[data-theme="dark"] .an-edit-tool-card {
-  background-color: #000;
-}
-
-.dark .an-edit-tool-card .an-edit-diff,
-.dark .an-edit-tool-card .an-edit-diff pre,
-.dark .an-edit-tool-card .an-edit-diff code {
-  background-color: #000 !important;
-}
-
-[data-theme="dark"] .an-edit-tool-card .an-edit-diff,
-[data-theme="dark"] .an-edit-tool-card .an-edit-diff pre,
-[data-theme="dark"] .an-edit-tool-card .an-edit-diff code {
-  background-color: #000 !important;
+.an-edit-tool-card .an-edit-diff,
+.an-edit-tool-card .an-edit-diff pre,
+.an-edit-tool-card .an-edit-diff code {
+  background-color: var(--code-bg) !important;
 }
 
 /* Markdown Code Block */

@@ -2,7 +2,11 @@
   "mcpServers": {
     "shadcn": {
       "command": "npx",
-      "args": ["-y", "shadcn@latest", "mcp"]
+      "args": [
+        "-y",
+        "shadcn@latest",
+        "mcp"
+      ]
     },
     "heroui-migration": {
       "type": "http",
@@ -10,14 +14,28 @@
     },
     "heroui-react": {
       "command": "npx",
-      "args": ["-y", "@heroui/react-mcp@latest"]
+      "args": [
+        "-y",
+        "@heroui/react-mcp@latest"
+      ]
     },
     "agent-elements": {
       "command": "npx",
-      "args": ["-y", "shadcn@canary", "mcp"],
+      "args": [
+        "-y",
+        "shadcn@canary",
+        "mcp"
+      ],
       "env": {
         "REGISTRY_URL": "https://agent-elements.21st.dev/r/index.json"
       }
+    },
+    "paper": {
+      "serverUrl": "http://127.0.0.1:29979/mcp"
+    },
+    "supabase": {
+      "type": "http",
+      "url": "https://mcp.supabase.com/mcp?project_ref=opihhvfcykzdkqvpsqby&features=docs%2Caccount%2Cdatabase%2Cdebugging%2Cdevelopment%2Cfunctions%2Cbranching"
     }
   }
 }

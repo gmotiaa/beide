@@ -1,6 +1,5 @@
-"use client";
-
 import { memo, useCallback, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { IconCheck, IconChevronDown } from "@tabler/icons-react";
 import type { ModelOption } from "../types";
 import { cn } from "../utils/cn";
@@ -23,6 +22,7 @@ export const ModelPicker = memo(function ModelPicker({
   placeholder = "Auto",
   className,
 }: ModelPickerProps) {
+  const { t } = useTranslation();
   const isControlled = value !== undefined;
   const [internalValue, setInternalValue] = useState(defaultValue);
   const activeId = isControlled ? value : internalValue;
@@ -51,7 +51,7 @@ export const ModelPicker = memo(function ModelPicker({
             "inline-flex h-7 items-center gap-1 rounded-[6px] px-2 text-[12px] leading-4 text-foreground/40 transition-colors hover:bg-foreground/6 cursor-pointer",
             className,
           )}
-          aria-label="Select model"
+          aria-label={t("agentElements.selectModel")}
         >
           <span className="font-medium">
             {activeModel?.name ?? placeholder}

@@ -1,7 +1,6 @@
-"use client";
-
 import { memo, useCallback, useState } from "react";
 import type { ComponentType } from "react";
+import { useTranslation } from "react-i18next";
 import { IconCheck, IconChevronDown } from "@tabler/icons-react";
 import { cn } from "../utils/cn";
 import { Popover } from "./popover";
@@ -28,6 +27,7 @@ export const ModeSelector = memo(function ModeSelector({
   onChange,
   className,
 }: ModeSelectorProps) {
+  const { t } = useTranslation();
   const isControlled = value !== undefined;
   const [internalValue, setInternalValue] = useState(defaultValue);
   const activeId = isControlled ? value : internalValue;
@@ -55,7 +55,7 @@ export const ModeSelector = memo(function ModeSelector({
         !hasMultiple && "pointer-events-none",
         className,
       )}
-      aria-label="Select mode"
+      aria-label={t("agentElements.selectMode")}
     >
       {ActiveIcon && <ActiveIcon className="size-3.5 shrink-0" />}
       <span className="font-medium">{activeMode?.label}</span>

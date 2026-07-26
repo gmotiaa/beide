@@ -2,16 +2,24 @@ import { useEffect, useRef, type ReactNode } from "react";
 import Editor, { type OnMount } from "@monaco-editor/react";
 import { useTranslation } from "react-i18next";
 import {
-  Alert,
-  Button,
+  IconAlertTriangle,
+  IconFolderOpen,
+  IconMessageChatbot,
+  IconTerminal2,
+  IconX,
+} from "@tabler/icons-react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
   Card,
-  Chip,
-  CloseButton,
-  Kbd,
-  Spinner,
-  Surface,
-} from "@heroui/react";
-import { IconFolderOpen, IconMessageChatbot, IconTerminal2 } from "@tabler/icons-react";
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Kbd, KbdGroup } from "@/components/ui/kbd";
+import { Spinner } from "@/components/ui/spinner";
 import { TabBar } from "./TabBar";
 import { useEditorStore } from "../../stores/editor";
 import { useSettingsStore } from "../../stores/settings";
@@ -38,16 +46,17 @@ function EditorWelcome({
   action?: ReactNode;
   showShortcuts?: boolean;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="editor-empty">
       <div className="editor-empty__glow" aria-hidden />
-      <Surface className="editor-empty__surface" variant="default">
+      <div className="editor-empty__surface rounded-3xl border border-border bg-card text-card-foreground shadow-sm">
         <div className="editor-empty__mark" aria-hidden>
           b
         </div>
-        <Chip color="accent" size="sm" variant="soft">
+        <Badge variant="secondary" className="bg-primary/10 text-primary">
           beide · desktop agent IDE
-        </Chip>
+        </Badge>
         <h1 className="editor-empty__title">{title}</h1>
         <p className="editor-empty__body">{body}</p>
 
@@ -55,74 +64,62 @@ function EditorWelcome({
 
         {showShortcuts && (
           <div className="editor-empty__grid">
-            <Card className="editor-empty__tip" variant="secondary">
-              <Card.Header className="gap-2">
+            <Card size="sm" className="editor-empty__tip bg-secondary">
+              <CardHeader className="gap-2">
                 <div className="editor-empty__tip-icon">
                   <IconFolderOpen size={18} stroke={1.75} />
                 </div>
-                <Card.Title className="text-sm">Workspace</Card.Title>
-                <Card.Description>
-                  Открой папку — дерево, поиск и контекст агента.
-                </Card.Description>
-              </Card.Header>
-              <Card.Footer className="gap-2">
-                <Kbd>
-                  <Kbd.Abbr keyValue="ctrl" />
-                  <Kbd.Content>O</Kbd.Content>
-                </Kbd>
-              </Card.Footer>
+                <CardTitle className="text-sm">Workspace</CardTitle>
+                <CardDescription>{t("editor.tipWorkspace")}</CardDescription>
+              </CardHeader>
+              <CardFooter className="gap-2">
+                <KbdGroup>
+                  <Kbd>Ctrl</Kbd>
+                  <Kbd>O</Kbd>
+                </KbdGroup>
+              </CardFooter>
             </Card>
 
-            <Card className="editor-empty__tip" variant="secondary">
-              <Card.Header className="gap-2">
+            <Card size="sm" className="editor-empty__tip bg-secondary">
+              <CardHeader className="gap-2">
                 <div className="editor-empty__tip-icon">
                   <IconMessageChatbot size={18} stroke={1.75} />
                 </div>
-                <Card.Title className="text-sm">Agent chat</Card.Title>
-                <Card.Description>
-                  Plan исследует. Agent правит с diff / ask.
-                </Card.Description>
-              </Card.Header>
-              <Card.Footer className="gap-2">
-                <Kbd>
-                  <Kbd.Abbr keyValue="ctrl" />
-                  <Kbd.Content>L</Kbd.Content>
-                </Kbd>
-              </Card.Footer>
+                <CardTitle className="text-sm">Agent chat</CardTitle>
+                <CardDescription>{t("editor.tipAgent")}</CardDescription>
+              </CardHeader>
+              <CardFooter className="gap-2">
+                <KbdGroup>
+                  <Kbd>Ctrl</Kbd>
+                  <Kbd>L</Kbd>
+                </KbdGroup>
+              </CardFooter>
             </Card>
 
-            <Card className="editor-empty__tip" variant="secondary">
-              <Card.Header className="gap-2">
+            <Card size="sm" className="editor-empty__tip bg-secondary">
+              <CardHeader className="gap-2">
                 <div className="editor-empty__tip-icon">
                   <IconTerminal2 size={18} stroke={1.75} />
                 </div>
-                <Card.Title className="text-sm">Terminal</Card.Title>
-                <Card.Description>
-                  Нижняя панель для shell в корне workspace.
-                </Card.Description>
-              </Card.Header>
-              <Card.Footer className="gap-2">
-                <Kbd>
-                  <Kbd.Abbr keyValue="ctrl" />
-                  <Kbd.Content>`</Kbd.Content>
-                </Kbd>
-              </Card.Footer>
+                <CardTitle className="text-sm">Terminal</CardTitle>
+                <CardDescription>{t("editor.tipTerminal")}</CardDescription>
+              </CardHeader>
+              <CardFooter className="gap-2">
+                <KbdGroup>
+                  <Kbd>Ctrl</Kbd>
+                  <Kbd>`</Kbd>
+                </KbdGroup>
+              </CardFooter>
             </Card>
           </div>
         )}
 
         <div className="editor-empty__chips">
-          <Chip size="sm" variant="soft">
-            Monaco
-          </Chip>
-          <Chip color="accent" size="sm" variant="primary">
-            pi + Grok
-          </Chip>
-          <Chip size="sm" variant="soft">
-            Plan / Agent
-          </Chip>
+          <Badge variant="secondary">Monaco</Badge>
+          <Badge>pi + Grok</Badge>
+          <Badge variant="secondary">Plan / Agent</Badge>
         </div>
-      </Surface>
+      </div>
     </div>
   );
 }
@@ -143,72 +140,101 @@ export function EditorArea({ emptyAction }: EditorAreaProps) {
   const opening = useEditorStore((s) => s.opening);
   const clearError = useEditorStore((s) => s.clearError);
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
+  const monacoRef = useRef<Parameters<OnMount>[1] | null>(null);
 
   useEffect(() => {
     return () => setMonaco(null);
   }, [setMonaco]);
 
+  // `keepCurrentModel` deliberately outlives tab switches, which also means a
+  // closed tab's model is never reclaimed. Drop models with no tab behind them.
+  useEffect(() => {
+    const monaco = monacoRef.current;
+    if (!monaco) return;
+    const open = new Set(tabs.map((tab) => monaco.Uri.parse(tab.path).toString()));
+    for (const model of monaco.editor.getModels()) {
+      if (!open.has(model.uri.toString())) model.dispose();
+    }
+  }, [tabs]);
+
   const onMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
+    monacoRef.current = monaco;
     setMonaco(editor);
 
+    // The three editor themes mirror the palette in themes.css: the editor
+    // surface is the same --panel the shell paints, and the caret/selection
+    // carry the patina accent. They used to sit on their own (a red caret on
+    // near-black, a purple one on white) which is why the editor never quite
+    // looked like part of the app.
     monaco.editor.defineTheme("beide-dark", {
       base: "vs-dark",
       inherit: true,
-      rules: [
-        { token: "comment", foreground: "5c6168", fontStyle: "italic" },
-      ],
+      rules: [{ token: "comment", foreground: "676c6e", fontStyle: "italic" }],
       colors: {
-        "editor.background": "#0a0b0c",
-        "editor.foreground": "#e6e4df",
-        "editorLineNumber.foreground": "#5c6168",
-        "editorLineNumber.activeForeground": "#8b9098",
-        "editor.selectionBackground": "#c8102e33",
-        "editor.inactiveSelectionBackground": "#c8102e18",
-        "editor.lineHighlightBackground": "#121416",
-        "editorCursor.foreground": "#c8102e",
-        "editorWidget.background": "#121416",
-        "editorWidget.border": "#2a2e33",
-        "editorIndentGuide.background": "#1e2226",
-        "editorIndentGuide.activeBackground": "#2a2e33",
-        "editorGutter.background": "#0a0b0c",
-        "editor.selectionHighlightBackground": "#c8102e18",
-        "scrollbarSlider.background": "#2a2e3388",
-        "scrollbarSlider.hoverBackground": "#3a4048",
+        "editor.background": "#1c1f21",
+        "editor.foreground": "#e9e7e2",
+        "editorLineNumber.foreground": "#676c6e",
+        "editorLineNumber.activeForeground": "#979c9d",
+        "editor.selectionBackground": "#4fa88f33",
+        "editor.inactiveSelectionBackground": "#4fa88f1a",
+        "editor.lineHighlightBackground": "#24282a",
+        "editorCursor.foreground": "#4fa88f",
+        "editorWidget.background": "#24282a",
+        "editorWidget.border": "#2b2f31",
+        "editorIndentGuide.background": "#2b2f31",
+        "editorIndentGuide.activeBackground": "#3b4143",
+        "editorGutter.background": "#1c1f21",
+        "editor.selectionHighlightBackground": "#4fa88f1a",
+        "scrollbarSlider.background": "#3b414388",
+        "scrollbarSlider.hoverBackground": "#4a5153",
       },
     });
 
     monaco.editor.defineTheme("beide-light", {
       base: "vs",
       inherit: true,
-      rules: [],
+      rules: [{ token: "comment", foreground: "8a8f8c", fontStyle: "italic" }],
       colors: {
-        "editor.background": "#ffffff",
-        "editor.foreground": "#111114",
-        "editor.selectionBackground": "#5b5bd633",
-        "editor.lineHighlightBackground": "#f4f4f8",
-        "editorCursor.foreground": "#5b5bd6",
-        "editorGutter.background": "#ffffff",
-        "editorLineNumber.foreground": "#9b9ba8",
-        "editorLineNumber.activeForeground": "#6b6b76",
-        "editorIndentGuide.background": "#ececf1",
-        "editorWidget.background": "#ffffff",
-        "editorWidget.border": "#e4e4e9",
+        "editor.background": "#fbfaf7",
+        "editor.foreground": "#22252a",
+        "editor.selectionBackground": "#2e7d6b2e",
+        "editor.inactiveSelectionBackground": "#2e7d6b16",
+        "editor.lineHighlightBackground": "#f1eee8",
+        "editorCursor.foreground": "#2e7d6b",
+        "editorGutter.background": "#fbfaf7",
+        "editorLineNumber.foreground": "#9a9c99",
+        "editorLineNumber.activeForeground": "#6e7379",
+        "editorIndentGuide.background": "#ebe7df",
+        "editorIndentGuide.activeBackground": "#dedad1",
+        "editorWidget.background": "#fbfaf7",
+        "editorWidget.border": "#dedad1",
+        "editor.selectionHighlightBackground": "#2e7d6b16",
+        "scrollbarSlider.background": "#c9c4b888",
+        "scrollbarSlider.hoverBackground": "#b3ada0",
       },
     });
 
     monaco.editor.defineTheme("beide-midnight", {
       base: "vs-dark",
       inherit: true,
-      rules: [],
+      rules: [{ token: "comment", foreground: "646a6c", fontStyle: "italic" }],
       colors: {
-        "editor.background": "#060708",
-        "editor.foreground": "#e6e4df",
-        "editor.selectionBackground": "#c8102e33",
-        "editor.lineHighlightBackground": "#0e1012",
-        "editorCursor.foreground": "#c8102e",
-        "editorGutter.background": "#060708",
-        "editorLineNumber.foreground": "#555a62",
+        "editor.background": "#141719",
+        "editor.foreground": "#efede8",
+        "editor.selectionBackground": "#5fbfa333",
+        "editor.inactiveSelectionBackground": "#5fbfa31a",
+        "editor.lineHighlightBackground": "#1c2022",
+        "editorCursor.foreground": "#5fbfa3",
+        "editorGutter.background": "#141719",
+        "editorLineNumber.foreground": "#646a6c",
+        "editorLineNumber.activeForeground": "#9aa0a1",
+        "editorIndentGuide.background": "#22272a",
+        "editorIndentGuide.activeBackground": "#333a3d",
+        "editorWidget.background": "#1c2022",
+        "editorWidget.border": "#22272a",
+        "scrollbarSlider.background": "#333a3d88",
+        "scrollbarSlider.hoverBackground": "#434a4d",
       },
     });
 
@@ -228,13 +254,22 @@ export function EditorArea({ emptyAction }: EditorAreaProps) {
   }, [theme]);
 
   const errorBanner = lastError ? (
-    <Alert status="danger" className="editor-banner-alert rounded-none border-x-0 border-t-0">
-      <Alert.Indicator />
-      <Alert.Content>
-        <Alert.Title>{t("common.error")}</Alert.Title>
-        <Alert.Description>{lastError}</Alert.Description>
-      </Alert.Content>
-      <CloseButton aria-label={t("common.close")} onPress={clearError} />
+    <Alert
+      variant="destructive"
+      className="editor-banner-alert rounded-none border-x-0 border-t-0 pr-11"
+    >
+      <IconAlertTriangle size={16} stroke={1.75} />
+      <AlertTitle>{t("common.error")}</AlertTitle>
+      <AlertDescription>{lastError}</AlertDescription>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        aria-label={t("common.close")}
+        onClick={clearError}
+        className="absolute top-2 right-2"
+      >
+        <IconX size={14} stroke={1.75} />
+      </Button>
     </Alert>
   ) : null;
 
@@ -247,7 +282,7 @@ export function EditorArea({ emptyAction }: EditorAreaProps) {
           showShortcuts
           action={
             emptyAction ?? (
-              <Button size="lg" onPress={() => void openFolder()}>
+              <Button size="lg" onClick={() => void openFolder()}>
                 <IconFolderOpen size={18} stroke={1.75} />
                 {t("common.openFolder")}
               </Button>
@@ -268,7 +303,7 @@ export function EditorArea({ emptyAction }: EditorAreaProps) {
           action={
             opening ? (
               <div className="editor-empty__loading">
-                <Spinner size="md" />
+                <Spinner size="lg" />
               </div>
             ) : (
               emptyAction
