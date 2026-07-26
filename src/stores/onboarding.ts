@@ -3,7 +3,13 @@ import { create } from "zustand";
 const KEY = "beide.onboarding.v1";
 const INTRO_KEY = "beide.intro.v1";
 
-export type OnboardingStep = "welcome" | "features" | "settings" | "account" | "done";
+export type OnboardingStep =
+  | "welcome"
+  | "features"
+  | "settings"
+  | "account"
+  | "ready"
+  | "done";
 
 interface OnboardingState {
   completed: boolean;

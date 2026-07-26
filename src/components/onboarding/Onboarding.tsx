@@ -3,24 +3,28 @@ import { useTranslation } from "react-i18next";
 import {
   IconAlertCircle,
   IconAlertTriangle,
+  IconArrowRight,
+  IconAt,
+  IconCheck,
+  IconEye,
+  IconEyeOff,
   IconFolder,
+  IconFolderOpen,
+  IconGauge,
+  IconLanguage,
   IconMap2,
+  IconMoon,
   IconRobot,
   IconShieldCheck,
   IconSparkles,
+  IconSun,
   IconTerminal2,
+  IconWand,
 } from "@tabler/icons-react";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Avatar, AvatarFallback } from "../ui/avatar";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
-import {
-  Card,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "../ui/card";
 import {
   Dialog,
   DialogClose,
@@ -31,40 +35,97 @@ import {
 } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
-import { Progress } from "../ui/progress";
-import { Separator } from "../ui/separator";
 import { Spinner } from "../ui/spinner";
 import { Tabs, TabsList, TabsTrigger } from "../ui/tabs";
 import { cn } from "../../lib/utils";
 import { useOnboardingStore } from "../../stores/onboarding";
 import { useAuthStore } from "../../stores/auth";
 import { useSettingsStore } from "../../stores/settings";
+import { useWorkspaceStore } from "../../stores/workspace";
 import type { ThemeId, LanguageId, PermissionMode } from "../../lib/types";
 
-const STEPS = ["welcome", "features", "settings", "account"] as const;
+const STEPS = ["welcome", "features", "settings", "account", "ready"] as const;
 type Step = (typeof STEPS)[number];
 
-function ChoicePill({
+/**
+ * Enter advances the wizard, but only when nothing on screen already owns it:
+ * fields submit their form and a focused control activates itself.
+ */
+function ownsEnter(el: EventTarget | null): boolean {
+  if (!(el instanceof HTMLElement)) return false;
+  return Boolean(
+    el.closest(
+      'input, textarea, select, button, a[href], [role="button"], [contenteditable=""], [contenteditable="true"]',
+    ),
+  );
+}
+
+/**
+ * A miniature IDE painted in one of the three palettes. `data-palette` scopes
+ * the palette block from themes.css to this subtree, so the swatch shows the
+ * real colours of a theme the app is not currently wearing — no hex here.
+ */
+function ThemeSwatch({ palette }: { palette: ThemeId }) {
+  return (
+    <span className="theme-swatch" data-palette={palette} aria-hidden>
+      <span className="theme-swatch__bar">
+        <i />
+        <i />
+        <i />
+      </span>
+      <span className="theme-swatch__body">
+        <span className="theme-swatch__side">
+          <i />
+          <i />
+          <i />
+        </span>
+        <span className="theme-swatch__main">
+          <i />
+          <i className="is-accent" />
+          <i />
+        </span>
+      </span>
+    </span>
+  );
+}
+
+function Choice({
   active,
-  children,
   onClick,
+  icon,
+  title,
+  hint,
+  media,
+  className,
 }: {
   active: boolean;
-  children: React.ReactNode;
   onClick: () => void;
+  icon?: React.ReactNode;
+  title: string;
+  hint?: string;
+  media?: React.ReactNode;
+  className?: string;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className={cn(
-        "rounded-lg border px-3 py-2 text-left text-sm transition-colors",
-        active
-          ? "border-primary/40 bg-primary/10 text-foreground ring-1 ring-primary/20"
-          : "border-border bg-background text-muted-foreground hover:bg-accent hover:text-foreground",
-      )}
+      aria-pressed={active}
+      className={cn("onb-choice", active && "is-active", className)}
     >
-      {children}
+      {media}
+      <span className="onb-choice__row">
+        {icon ? (
+          <span className="onb-choice__icon" aria-hidden>
+            {icon}
+          </span>
+        ) : null}
+        <span className="onb-choice__title">{title}</span>
+        <span className="onb-choice__check" aria-hidden>
+          <IconCheck className="size-3" stroke={2.5} />
+        </span>
+      </span>
+      {hint ? <span className="onb-choice__hint">{hint}</span> : null}
     </button>
   );
 }
@@ -96,8 +157,13 @@ export function Onboarding() {
   const settings = useSettingsStore((s) => s.settings);
   const updateSettings = useSettingsStore((s) => s.update);
 
+  const rootPath = useWorkspaceStore((s) => s.rootPath);
+  const openFolder = useWorkspaceStore((s) => s.openFolder);
+  const workspaceLoading = useWorkspaceStore((s) => s.loading);
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
   const [signingOut, setSigningOut] = useState(false);
   const [otp, setOtp] = useState("");
@@ -105,14 +171,31 @@ export function Onboarding() {
   const [otpOpen, setOtpOpen] = useState(false);
 
   const idx = Math.max(0, STEPS.indexOf(step as Step));
-  const progress = ((idx + 1) / STEPS.length) * 100;
   const currentStep = STEPS[idx] ?? "welcome";
+  const progress = ((idx + 1) / STEPS.length) * 100;
+  const signedIn = Boolean(user && session);
 
-  const stepLabels: Record<Step, string> = {
-    welcome: t("onboarding.stepWelcome"),
-    features: t("onboarding.stepFeatures"),
-    settings: t("onboarding.stepSettings"),
-    account: t("onboarding.stepAccount"),
+  const stepMeta: Record<Step, { label: string; hint: string }> = {
+    welcome: {
+      label: t("onboarding.stepWelcome"),
+      hint: t("onboarding.stepWelcomeHint"),
+    },
+    features: {
+      label: t("onboarding.stepFeatures"),
+      hint: t("onboarding.stepFeaturesHint"),
+    },
+    settings: {
+      label: t("onboarding.stepSettings"),
+      hint: t("onboarding.stepSettingsHint"),
+    },
+    account: {
+      label: t("onboarding.stepAccount"),
+      hint: t("onboarding.stepAccountHint"),
+    },
+    ready: {
+      label: t("onboarding.stepReady"),
+      hint: t("onboarding.stepReadyHint"),
+    },
   };
 
   const features = [
@@ -136,6 +219,24 @@ export function Onboarding() {
     },
   ] as const;
 
+  const themeOptions: Array<{ value: ThemeId; label: string; hint: string }> = [
+    {
+      value: "light",
+      label: t("settings.themeLight"),
+      hint: t("onboarding.themeLightHint"),
+    },
+    {
+      value: "dark",
+      label: t("settings.themeDark"),
+      hint: t("onboarding.themeDarkHint"),
+    },
+    {
+      value: "midnight",
+      label: t("settings.themeMidnight"),
+      hint: t("onboarding.themeMidnightHint"),
+    },
+  ];
+
   useEffect(() => {
     clearError();
   }, [authMode, clearError]);
@@ -154,10 +255,27 @@ export function Onboarding() {
     if (idx > 0) setStep(STEPS[idx - 1]!);
   };
 
+  // Enter walks the wizard forward while the user is not typing; the last step
+  // finishes it. The OTP dialog owns Enter for itself, so it is excluded.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Enter" || e.shiftKey || otpOpen) return;
+      if (ownsEnter(e.target)) return;
+      e.preventDefault();
+      if (currentStep === "ready") complete();
+      else if (idx < STEPS.length - 1) setStep(STEPS[idx + 1]!);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [currentStep, idx, otpOpen, complete, setStep]);
+
   const submitAuth = async () => {
     if (authMode === "login") {
       const ok = await signIn(email.trim(), password);
-      if (ok) complete();
+      // Signing in is not the finish line any more — the last step hands the
+      // user a workspace, so land there instead of dropping straight into the
+      // empty IDE.
+      if (ok) setStep("ready");
       return;
     }
     const result = await signUp(email.trim(), password);
@@ -168,7 +286,7 @@ export function Onboarding() {
       setOtpOpen(true);
       return;
     }
-    complete();
+    setStep("ready");
   };
 
   const submitOtp = async () => {
@@ -177,7 +295,7 @@ export function Onboarding() {
     const ok = await verifyEmailOtp(mail, otp);
     if (ok) {
       setOtpOpen(false);
-      complete();
+      setStep("ready");
     }
   };
 
@@ -193,6 +311,10 @@ export function Onboarding() {
     }
   };
 
+  const shortPath = rootPath
+    ? rootPath.replace(/\\/g, "/").split("/").filter(Boolean).slice(-2).join("/")
+    : null;
+
   return (
     <div
       className="onboarding"
@@ -204,128 +326,133 @@ export function Onboarding() {
         <div className="onboarding__orb onboarding__orb--a" />
         <div className="onboarding__orb onboarding__orb--b" />
         <div className="onboarding__grid" />
+        <div className="onboarding__veil" />
       </div>
 
       <div className="onboarding__frame">
         <aside className="onboarding__aside">
-          <div className="onboarding__aside-top">
-            <div className="onboarding__logo-row">
-              <div className="onboarding__mark" aria-hidden>
-                b
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <div className="onboarding__wordmark">beide</div>
-                <Badge className="w-fit gap-1 font-normal">
-                  <IconSparkles className="size-3" stroke={2} />
-                  AI IDE · BY
-                </Badge>
-              </div>
+          <div className="onboarding__brand">
+            <div className="onboarding__mark" aria-hidden>
+              b
             </div>
-
-            <h2 className="onboarding__headline">
-              {t("onboarding.headlineTop")}
-              <br />
-              <span>{t("onboarding.headlineAccent")}</span>
-            </h2>
-            <p className="onboarding__sub">{t("onboarding.sub")}</p>
+            <div className="onboarding__brand-text">
+              <div className="onboarding__wordmark">beide</div>
+              <Badge variant="secondary" className="w-fit gap-1 font-normal">
+                <IconSparkles className="size-3" stroke={2} />
+                AI IDE · BY
+              </Badge>
+            </div>
           </div>
 
-          <div className="onboarding__aside-stats">
-            <Card size="sm" className="onboarding__stat-card">
-              <CardHeader className="flex-row items-center gap-3 space-y-0">
-                <div className="onboarding__stat-icon">
-                  <IconTerminal2 className="size-4" stroke={1.75} />
-                </div>
-                <div className="min-w-0">
-                  <CardTitle className="text-sm">pi + Grok</CardTitle>
-                  <CardDescription>
-                    {t("onboarding.statAgentDesc")}
-                  </CardDescription>
-                </div>
-              </CardHeader>
-            </Card>
-            <Card size="sm" className="onboarding__stat-card">
-              <CardHeader className="flex-row items-center gap-3 space-y-0">
-                <div className="onboarding__stat-icon">
-                  <IconShieldCheck className="size-4" stroke={1.75} />
-                </div>
-                <div className="min-w-0">
-                  <CardTitle className="text-sm">ask / auto</CardTitle>
-                  <CardDescription>
-                    {t("onboarding.statPermissionsDesc")}
-                  </CardDescription>
-                </div>
-              </CardHeader>
-            </Card>
-          </div>
-        </aside>
+          <h2 className="onboarding__headline">
+            {t("onboarding.headlineTop")}
+            <br />
+            <span>{t("onboarding.headlineAccent")}</span>
+          </h2>
+          <p className="onboarding__sub">{t("onboarding.sub")}</p>
 
-        <Card className="onboarding__panel border-0 shadow-lg ring-1 ring-foreground/10">
-          <CardHeader className="gap-3 border-b border-border pb-4">
-            <div className="onboarding__steps">
-              {STEPS.map((s, i) => {
-                const active = i === idx;
-                const done = i < idx;
-                return (
+          {/* The rail is the real progress indicator on wide screens; the panel
+              header keeps a compact bar for when the aside is hidden. */}
+          <ol className="onboarding__rail">
+            {STEPS.map((s, i) => {
+              const active = i === idx;
+              const done = i < idx;
+              return (
+                <li key={s}>
                   <button
-                    key={s}
                     type="button"
                     className={cn(
-                      "onboarding__step-chip",
+                      "onboarding__rail-step",
                       active && "is-active",
                       done && "is-done",
                     )}
+                    disabled={!done && !active}
+                    aria-current={active ? "step" : undefined}
                     onClick={() => {
                       if (done || active) setStep(s);
                     }}
-                    disabled={!done && !active}
                   >
-                    <span className="onboarding__step-num">{i + 1}</span>
-                    <span className="onboarding__step-label">
-                      {stepLabels[s]}
+                    <span className="onboarding__rail-dot" aria-hidden>
+                      {done ? (
+                        <IconCheck className="size-3" stroke={3} />
+                      ) : (
+                        i + 1
+                      )}
+                    </span>
+                    <span className="onboarding__rail-text">
+                      <span className="onboarding__rail-label">
+                        {stepMeta[s].label}
+                      </span>
+                      <span className="onboarding__rail-hint">
+                        {stepMeta[s].hint}
+                      </span>
                     </span>
                   </button>
-                );
-              })}
-            </div>
-            <Progress value={progress} className="w-full" />
-          </CardHeader>
+                </li>
+              );
+            })}
+          </ol>
 
-          <div className="onboarding__body">
+          <p className="onboarding__note">{t("onboarding.localNote")}</p>
+        </aside>
+
+        <section className="onboarding__panel">
+          <header className="onboarding__panel-head">
+            <div className="onboarding__panel-head-row">
+              <span className="onboarding__counter">
+                {t("onboarding.stepCounter", {
+                  current: idx + 1,
+                  total: STEPS.length,
+                })}
+              </span>
+              <span className="onboarding__panel-step">
+                {stepMeta[currentStep].label}
+              </span>
+            </div>
+            <div
+              className="onboarding__progress"
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.round(progress)}
+            >
+              <span style={{ width: `${progress}%` }} />
+            </div>
+          </header>
+
+          <div className="onboarding__body" key={currentStep}>
             {currentStep === "welcome" && (
-              <section className="onboarding__section">
-                <Badge variant="secondary" className="w-fit font-normal">
-                  {t("onboarding.badgeWelcome")}
-                </Badge>
+              <div className="onboarding__section">
                 <h1>{t("onboarding.welcomeTitle")}</h1>
                 <p className="onboarding__lead">{t("onboarding.welcomeLead")}</p>
 
                 <div className="onboarding__hero-cards">
-                  <Card size="sm" className="onboarding__hero-card">
-                    <CardHeader className="gap-1">
-                      <CardTitle>{t("onboarding.heroWindowsTitle")}</CardTitle>
-                      <CardDescription>
-                        {t("onboarding.heroWindowsBody")}
-                      </CardDescription>
-                    </CardHeader>
-                  </Card>
-                  <Card size="sm" className="onboarding__hero-card">
-                    <CardHeader className="gap-1">
-                      <CardTitle>{t("onboarding.heroNoMarketTitle")}</CardTitle>
-                      <CardDescription>
-                        {t("onboarding.heroNoMarketBody")}
-                      </CardDescription>
-                    </CardHeader>
-                  </Card>
+                  <article className="onb-card">
+                    <div className="onb-card__icon" aria-hidden>
+                      <IconTerminal2 className="size-4" stroke={1.75} />
+                    </div>
+                    <h3>{t("onboarding.heroWindowsTitle")}</h3>
+                    <p>{t("onboarding.heroWindowsBody")}</p>
+                  </article>
+                  <article className="onb-card">
+                    <div className="onb-card__icon" aria-hidden>
+                      <IconWand className="size-4" stroke={1.75} />
+                    </div>
+                    <h3>{t("onboarding.heroNoMarketTitle")}</h3>
+                    <p>{t("onboarding.heroNoMarketBody")}</p>
+                  </article>
                 </div>
-              </section>
+
+                <ul className="onboarding__list">
+                  <li>{t("onboarding.welcomePoint1")}</li>
+                  <li>{t("onboarding.welcomePoint2")}</li>
+                  <li>{t("onboarding.welcomePoint3")}</li>
+                </ul>
+              </div>
             )}
 
             {currentStep === "features" && (
-              <section className="onboarding__section">
-                <Badge variant="secondary" className="w-fit font-normal">
-                  {t("onboarding.badgeFeatures")}
-                </Badge>
+              <div className="onboarding__section">
                 <h1>{t("onboarding.featuresTitle")}</h1>
                 <p className="onboarding__lead">
                   {t("onboarding.featuresLead")}
@@ -333,141 +460,126 @@ export function Onboarding() {
 
                 <div className="onboarding__feature-grid">
                   {features.map((f) => (
-                    <Card key={f.chip} size="sm" className="onboarding__feature-card">
-                      <CardHeader className="gap-2">
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="onboarding__feature-icon">
-                            <f.icon className="size-5" stroke={1.6} />
-                          </div>
+                    <article key={f.chip} className="onb-feature">
+                      <div className="onb-feature__icon" aria-hidden>
+                        <f.icon className="size-5" stroke={1.6} />
+                      </div>
+                      <div className="onb-feature__text">
+                        <div className="onb-feature__title-row">
+                          <h3>{f.title}</h3>
                           <Badge variant="outline" className="font-normal">
                             {f.chip}
                           </Badge>
                         </div>
-                        <CardTitle>{f.title}</CardTitle>
-                        <CardDescription>{f.body}</CardDescription>
-                      </CardHeader>
-                    </Card>
+                        <p>{f.body}</p>
+                      </div>
+                    </article>
                   ))}
                 </div>
-              </section>
+              </div>
             )}
 
             {currentStep === "settings" && (
-              <section className="onboarding__section">
-                <Badge variant="secondary" className="w-fit font-normal">
-                  {t("onboarding.badgeSettings")}
-                </Badge>
+              <div className="onboarding__section">
                 <h1>{t("onboarding.settingsTitle")}</h1>
                 <p className="onboarding__lead">
                   {t("onboarding.settingsLead")}
                 </p>
 
                 <div className="onboarding__fields">
-                  <div className="flex flex-col gap-2">
-                    <div className="text-sm font-medium">
-                      {t("onboarding.theme")}
+                  <div className="onboarding__field">
+                    <div className="onboarding__field-head">
+                      <IconSun className="size-3.5" stroke={1.75} />
+                      <span>{t("onboarding.theme")}</span>
+                      <em>{t("onboarding.themeHint")}</em>
                     </div>
-                    <p className="text-xs text-muted-foreground">
-                      {t("onboarding.themeHint")}
-                    </p>
-                    <div className="grid grid-cols-3 gap-2">
-                      {(
-                        [
-                          ["light", t("settings.themeLight")],
-                          ["dark", t("settings.themeDark")],
-                          ["midnight", t("settings.themeMidnight")],
-                        ] as const
-                      ).map(([value, label]) => (
-                        <ChoicePill
-                          key={value}
-                          active={settings.theme === value}
+                    <div className="onboarding__theme-grid">
+                      {themeOptions.map((option) => (
+                        <Choice
+                          key={option.value}
+                          className="onb-choice--theme"
+                          active={settings.theme === option.value}
                           onClick={() =>
-                            void updateSettings({ theme: value as ThemeId })
+                            void updateSettings({ theme: option.value })
                           }
-                        >
-                          {label}
-                        </ChoicePill>
+                          icon={
+                            option.value === "light" ? (
+                              <IconSun className="size-3.5" stroke={1.75} />
+                            ) : option.value === "dark" ? (
+                              <IconMoon className="size-3.5" stroke={1.75} />
+                            ) : (
+                              <IconSparkles className="size-3.5" stroke={1.75} />
+                            )
+                          }
+                          title={option.label}
+                          hint={option.hint}
+                          media={<ThemeSwatch palette={option.value} />}
+                        />
                       ))}
                     </div>
                   </div>
 
-                  <Separator />
-
-                  <div className="flex flex-col gap-2">
-                    <div className="text-sm font-medium">
-                      {t("settings.language")}
+                  <div className="onboarding__field">
+                    <div className="onboarding__field-head">
+                      <IconLanguage className="size-3.5" stroke={1.75} />
+                      <span>{t("settings.language")}</span>
                     </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <ChoicePill
-                        active={settings.language === "ru"}
-                        onClick={() =>
-                          void updateSettings({ language: "ru" as LanguageId })
-                        }
-                      >
-                        {t("settings.languageRu")}
-                      </ChoicePill>
-                      <ChoicePill
-                        active={settings.language === "en"}
-                        onClick={() =>
-                          void updateSettings({ language: "en" as LanguageId })
-                        }
-                      >
-                        {t("settings.languageEn")}
-                      </ChoicePill>
+                    <div className="onboarding__pair">
+                      {(
+                        [
+                          ["ru", t("settings.languageRu")],
+                          ["en", t("settings.languageEn")],
+                        ] as const
+                      ).map(([value, label]) => (
+                        <Choice
+                          key={value}
+                          active={settings.language === value}
+                          onClick={() =>
+                            void updateSettings({ language: value as LanguageId })
+                          }
+                          title={label}
+                        />
+                      ))}
                     </div>
                   </div>
 
-                  <Separator />
-
-                  <div className="flex flex-col gap-2">
-                    <div className="text-sm font-medium">
-                      {t("onboarding.permissions")}
+                  <div className="onboarding__field">
+                    <div className="onboarding__field-head">
+                      <IconShieldCheck className="size-3.5" stroke={1.75} />
+                      <span>{t("onboarding.permissions")}</span>
+                      <em>{t("onboarding.permissionsHint")}</em>
                     </div>
-                    <p className="text-xs text-muted-foreground">
-                      {t("onboarding.permissionsHint")}
-                    </p>
-                    <div className="flex flex-col gap-2">
-                      <ChoicePill
+                    <div className="onboarding__pair">
+                      <Choice
                         active={settings.permissionMode === "ask"}
                         onClick={() =>
                           void updateSettings({
                             permissionMode: "ask" as PermissionMode,
                           })
                         }
-                      >
-                        <div className="font-medium text-foreground">
-                          {t("onboarding.permissionAskTitle")}
-                        </div>
-                        <div className="mt-0.5 text-xs text-muted-foreground">
-                          {t("onboarding.permissionAskHint")}
-                        </div>
-                      </ChoicePill>
-                      <ChoicePill
+                        icon={<IconShieldCheck className="size-3.5" stroke={1.75} />}
+                        title={t("onboarding.permissionAskTitle")}
+                        hint={t("onboarding.permissionAskHint")}
+                      />
+                      <Choice
                         active={settings.permissionMode === "auto"}
                         onClick={() =>
                           void updateSettings({
                             permissionMode: "auto" as PermissionMode,
                           })
                         }
-                      >
-                        <div className="font-medium text-foreground">
-                          {t("onboarding.permissionAutoTitle")}
-                        </div>
-                        <div className="mt-0.5 text-xs text-muted-foreground">
-                          {t("onboarding.permissionAutoHint")}
-                        </div>
-                      </ChoicePill>
+                        icon={<IconGauge className="size-3.5" stroke={1.75} />}
+                        title={t("onboarding.permissionAutoTitle")}
+                        hint={t("onboarding.permissionAutoHint")}
+                      />
                     </div>
                   </div>
                 </div>
-              </section>
+              </div>
             )}
 
             {currentStep === "account" && (
-              <section className="onboarding__section">
-                <Badge variant="secondary" className="w-fit font-normal">
-                  {t("onboarding.badgeAccount")}
-                </Badge>
+              <div className="onboarding__section">
                 <h1>{t("onboarding.accountTitle")}</h1>
                 <p className="onboarding__lead">{t("onboarding.accountLead")}</p>
 
@@ -475,41 +587,31 @@ export function Onboarding() {
                   <div className="onboarding__center">
                     <Spinner size="lg" />
                   </div>
-                ) : user && session ? (
-                  <Card size="sm">
-                    <CardHeader className="flex-row items-center gap-3">
-                      <Avatar>
-                        <AvatarFallback>
-                          {(user.email?.[0] ?? "u").toUpperCase()}
-                        </AvatarFallback>
-                      </Avatar>
-                      <div className="min-w-0">
-                        <CardTitle className="truncate text-base">
-                          {user.email}
-                        </CardTitle>
-                        <CardDescription>
-                          {t("onboarding.sessionRestored")}
-                        </CardDescription>
-                      </div>
-                    </CardHeader>
-                    <CardFooter className="flex flex-wrap gap-2">
-                      <Button type="button" onClick={() => complete()}>
-                        {t("onboarding.continue")}
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        disabled={signingOut}
-                        onClick={() => void handleSignOut()}
-                      >
-                        {signingOut ? "…" : t("onboarding.signOutSwitch")}
-                      </Button>
-                    </CardFooter>
-                  </Card>
+                ) : signedIn ? (
+                  <div className="onb-account">
+                    <Avatar>
+                      <AvatarFallback>
+                        {(user?.email?.[0] ?? "u").toUpperCase()}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="onb-account__text">
+                      <strong>{user?.email}</strong>
+                      <span>{t("onboarding.sessionRestored")}</span>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={signingOut}
+                      onClick={() => void handleSignOut()}
+                    >
+                      {signingOut ? "…" : t("onboarding.signOutSwitch")}
+                    </Button>
+                  </div>
                 ) : (
                   <>
                     {!configured && (
-                      <Alert className="mb-1" variant="warning">
+                      <Alert variant="warning">
                         <IconAlertTriangle stroke={1.75} />
                         <AlertTitle>
                           {t("onboarding.supabaseNotConfigured")}
@@ -537,41 +639,74 @@ export function Onboarding() {
                       </TabsList>
                     </Tabs>
 
-                    <div className="onboarding__fields mt-1">
-                      <div className="flex w-full flex-col gap-2">
+                    <form
+                      className="onboarding__form"
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        void submitAuth();
+                      }}
+                    >
+                      <div className="onboarding__form-field">
                         <Label htmlFor="onboarding-email">
                           {t("onboarding.email")}
                         </Label>
-                        <Input
-                          id="onboarding-email"
-                          name="email"
-                          type="email"
-                          value={email}
-                          autoComplete="email"
-                          placeholder="you@example.com"
-                          disabled={!configured || authLoading}
-                          onChange={(e) => setEmail(e.target.value)}
-                        />
+                        <div className="onboarding__input-wrap">
+                          <IconAt
+                            className="onboarding__input-icon size-4"
+                            stroke={1.75}
+                            aria-hidden
+                          />
+                          <Input
+                            id="onboarding-email"
+                            name="email"
+                            type="email"
+                            className="pl-9"
+                            value={email}
+                            autoComplete="email"
+                            placeholder="you@example.com"
+                            disabled={!configured || authLoading}
+                            onChange={(e) => setEmail(e.target.value)}
+                          />
+                        </div>
                       </div>
 
-                      <div className="flex w-full flex-col gap-2">
+                      <div className="onboarding__form-field">
                         <Label htmlFor="onboarding-password">
                           {t("onboarding.password")}
                         </Label>
-                        <Input
-                          id="onboarding-password"
-                          name="password"
-                          type="password"
-                          value={password}
-                          autoComplete={
-                            authMode === "login"
-                              ? "current-password"
-                              : "new-password"
-                          }
-                          placeholder={t("onboarding.passwordPlaceholder")}
-                          disabled={!configured || authLoading}
-                          onChange={(e) => setPassword(e.target.value)}
-                        />
+                        <div className="onboarding__input-wrap">
+                          <Input
+                            id="onboarding-password"
+                            name="password"
+                            type={showPassword ? "text" : "password"}
+                            className="pr-10"
+                            value={password}
+                            autoComplete={
+                              authMode === "login"
+                                ? "current-password"
+                                : "new-password"
+                            }
+                            placeholder={t("onboarding.passwordPlaceholder")}
+                            disabled={!configured || authLoading}
+                            onChange={(e) => setPassword(e.target.value)}
+                          />
+                          <button
+                            type="button"
+                            className="onboarding__input-toggle"
+                            aria-label={
+                              showPassword
+                                ? t("onboarding.passwordHide")
+                                : t("onboarding.passwordShow")
+                            }
+                            onClick={() => setShowPassword((v) => !v)}
+                          >
+                            {showPassword ? (
+                              <IconEyeOff className="size-4" stroke={1.75} />
+                            ) : (
+                              <IconEye className="size-4" stroke={1.75} />
+                            )}
+                          </button>
+                        </div>
                       </div>
 
                       {authError && (
@@ -583,7 +718,7 @@ export function Onboarding() {
                       )}
 
                       <Button
-                        type="button"
+                        type="submit"
                         className="w-full"
                         size="lg"
                         disabled={
@@ -592,18 +727,91 @@ export function Onboarding() {
                           !email ||
                           password.length < 6
                         }
-                        onClick={() => void submitAuth()}
                       >
-                        {authLoading
-                          ? "…"
-                          : authMode === "login"
-                            ? t("onboarding.signInAndStart")
-                            : t("onboarding.signUpAndStart")}
+                        {authLoading ? <Spinner size="sm" /> : null}
+                        {authMode === "login"
+                          ? t("onboarding.signInAndStart")
+                          : t("onboarding.signUpAndStart")}
                       </Button>
-                    </div>
+                    </form>
                   </>
                 )}
-              </section>
+              </div>
+            )}
+
+            {currentStep === "ready" && (
+              <div className="onboarding__section">
+                <h1>{t("onboarding.readyTitle")}</h1>
+                <p className="onboarding__lead">{t("onboarding.readyLead")}</p>
+
+                <div
+                  className={cn(
+                    "onb-workspace",
+                    rootPath && "is-picked",
+                  )}
+                >
+                  <div className="onb-workspace__icon" aria-hidden>
+                    <IconFolderOpen className="size-5" stroke={1.6} />
+                  </div>
+                  <div className="onb-workspace__text">
+                    <strong>
+                      {rootPath
+                        ? shortPath
+                        : t("onboarding.workspaceEmptyTitle")}
+                    </strong>
+                    <span
+                      className={rootPath ? "is-path" : undefined}
+                      title={rootPath ?? undefined}
+                    >
+                      {rootPath ?? t("onboarding.workspaceEmptyHint")}
+                    </span>
+                  </div>
+                  <Button
+                    type="button"
+                    variant={rootPath ? "outline" : "default"}
+                    disabled={workspaceLoading}
+                    onClick={() => void openFolder()}
+                  >
+                    {workspaceLoading ? <Spinner size="sm" /> : null}
+                    {rootPath
+                      ? t("onboarding.workspaceChange")
+                      : t("common.openFolder")}
+                  </Button>
+                </div>
+
+                <div className="onboarding__summary">
+                  <span className="onboarding__summary-item">
+                    <IconSun className="size-3.5" stroke={1.75} />
+                    {settings.theme === "light"
+                      ? t("settings.themeLight")
+                      : settings.theme === "dark"
+                        ? t("settings.themeDark")
+                        : t("settings.themeMidnight")}
+                  </span>
+                  <span className="onboarding__summary-item">
+                    <IconLanguage className="size-3.5" stroke={1.75} />
+                    {settings.language === "ru"
+                      ? t("settings.languageRu")
+                      : t("settings.languageEn")}
+                  </span>
+                  <span className="onboarding__summary-item">
+                    <IconShieldCheck className="size-3.5" stroke={1.75} />
+                    {settings.permissionMode === "ask"
+                      ? t("onboarding.permissionAskTitle")
+                      : t("onboarding.permissionAutoTitle")}
+                  </span>
+                  <span className="onboarding__summary-item">
+                    <IconRobot className="size-3.5" stroke={1.75} />
+                    {signedIn
+                      ? (user?.email ?? t("onboarding.accountSignedIn"))
+                      : t("onboarding.accountLocal")}
+                  </span>
+                </div>
+
+                <p className="onboarding__hint-line">
+                  {t("onboarding.readyShortcuts")}
+                </p>
+              </div>
             )}
           </div>
 
@@ -619,23 +827,24 @@ export function Onboarding() {
             )}
 
             <div className="onboarding__footer-right">
-              {currentStep === "account" && !user && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => complete()}
-                >
-                  {t("onboarding.skip")}
+              {currentStep === "ready" ? (
+                <Button type="button" size="lg" onClick={() => complete()}>
+                  {t("onboarding.finish")}
+                  <IconArrowRight className="size-4" stroke={2} />
                 </Button>
-              )}
-              {currentStep !== "account" && (
+              ) : (
                 <Button type="button" size="lg" onClick={next}>
-                  {t("onboarding.next")}
+                  {/* On the account step the form carries "sign in"; the footer
+                      button is the way past it, so it says so. */}
+                  {currentStep === "account" && !signedIn
+                    ? t("onboarding.skip")
+                    : t("onboarding.next")}
+                  <IconArrowRight className="size-4" stroke={2} />
                 </Button>
               )}
             </div>
           </footer>
-        </Card>
+        </section>
       </div>
 
       <Dialog

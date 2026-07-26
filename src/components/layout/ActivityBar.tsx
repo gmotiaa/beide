@@ -22,12 +22,16 @@ export function ActivityBar({
 }: ActivityBarProps) {
   const { t } = useTranslation();
 
+  // The shortcuts exist in AppLayout but were invisible; the rail is where a
+  // user looks for them. Windows-first, same as the editor welcome cards.
+  const hint = (label: string, keys: string) => `${label} · ${keys}`;
+
   return (
     <nav className="activity-bar" aria-label="Activity">
       <button
         type="button"
         className={`activity-btn${active === "files" ? " is-active" : ""}`}
-        title={t("activity.files")}
+        title={hint(t("activity.files"), "Ctrl+B")}
         aria-label={t("activity.files")}
         aria-pressed={active === "files"}
         onClick={() => onChange("files")}
@@ -60,7 +64,7 @@ export function ActivityBar({
       <button
         type="button"
         className={`activity-btn${terminalOpen ? " is-active" : ""}`}
-        title={t("activity.toggleTerminal")}
+        title={hint(t("activity.toggleTerminal"), "Ctrl+`")}
         aria-label={t("activity.toggleTerminal")}
         aria-pressed={terminalOpen}
         onClick={onToggleTerminal}
@@ -70,7 +74,7 @@ export function ActivityBar({
       <button
         type="button"
         className={`activity-btn${chatOpen ? " is-active" : ""}`}
-        title={t("activity.toggleChat")}
+        title={hint(t("activity.toggleChat"), "Ctrl+L")}
         aria-label={t("activity.toggleChat")}
         aria-pressed={chatOpen}
         onClick={onToggleChat}

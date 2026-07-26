@@ -1185,6 +1185,65 @@ html.dark .title-bar {
   text-transform: none;
 }
 
+.status-bar__left .status-bar__item:first-child {
+  display: inline-flex;
+  align-items: center;
+}
+
+/* Clickable status items read as chips on hover — flat until then, so the
+   bar stays quiet. */
+.status-bar__button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 22ch;
+  height: 18px;
+  padding: 0 6px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  transition:
+    background var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out);
+}
+
+.status-bar__button:hover {
+  background: var(--panel-hover);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.status-bar__button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.status-bar__button svg {
+  flex-shrink: 0;
+  opacity: 0.75;
+}
+
+.status-bar__button.is-plan {
+  color: var(--accent);
+}
+
+.status-bar__button .status-bar__item {
+  min-width: 0;
+}
+
+.status-bar__dirty {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--warning);
+}
+
 .status-dot {
   width: 6px;
   height: 6px;
@@ -1216,6 +1275,25 @@ html.dark .title-bar {
   font-weight: 650;
   text-transform: uppercase;
   color: var(--text-muted);
+}
+
+.terminal-panel__title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.terminal-panel__header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.terminal-panel__cwd-chip {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .terminal-panel__body {

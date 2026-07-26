@@ -84,8 +84,10 @@ state.
   each section lives in `sections.tsx`, the quota screen in `UsageSection.tsx`,
   the shared row/field/choice primitives in `parts.tsx`, and the pure helpers in
   `helpers.ts` (kept out of the `.tsx` files so Fast Refresh keeps working).
-* `onboarding/Onboarding.tsx`,
-  `onboarding/FirstRunIntro.tsx` (splash + WebAudio chime on the very first
+* `onboarding/Onboarding.tsx` — five-step wizard (welcome → modes → settings →
+  account → ready). The last step opens a workspace folder, so signing in is no
+  longer the finish line: `submitAuth` lands on `ready` instead of completing.
+* `onboarding/FirstRunIntro.tsx` (splash + WebAudio chime on the very first
   launch; sounds are synthesised in `src/lib/sound.ts` because the CSP has no
   `media-src`).
 

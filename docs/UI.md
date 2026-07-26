@@ -37,6 +37,13 @@ scroll.
 
 Never hardcode a hex value in a component. Add or reuse a token.
 
+Each palette also answers to `[data-palette="light|dark|midnight"]` on any
+element, so a subtree can paint itself in a theme the app is not wearing — the
+onboarding theme swatches are miniature IDEs built that way. Only the palette
+is scoped: the derived tokens (`--accent-muted`, `--shadow`, `--focus-ring`, …)
+are computed on `:root` and inherited, so a preview sticks to `--bg`, `--panel`,
+`--border`, `--text` and `--accent`.
+
 ## Agent Elements
 
 `src/components/agent-elements/` is vendored from
@@ -73,6 +80,10 @@ Registered globally in `AppLayout` (`Ctrl` on Windows, `Cmd` on macOS):
 | `Ctrl/Cmd+L` | open the chat panel and focus `#chat-composer` |
 | `Ctrl/Cmd+B` | toggle the sidebar |
 | ``Ctrl/Cmd+` `` | toggle the terminal |
+
+The activity-bar tooltips spell out the shortcut they duplicate, and the status
+bar exposes the same two actions as chips: the workspace item opens a folder,
+the mode item flips `plan` ⇄ `agent`.
 
 Inside the terminal input, `Ctrl/Cmd+L` clears the log instead; `↑`/`↓` walk the
 command history. In the composer, `Enter` sends and `Shift+Enter` inserts a

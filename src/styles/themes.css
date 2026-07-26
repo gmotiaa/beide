@@ -6,6 +6,14 @@
    chat (--an-*). Themes only override the palette block; every
    derived token below resolves from it, so a new theme never has
    to restate shadows, fields, scrollbars or chat colours.
+
+   Each palette also answers to `[data-palette="…"]` on any element,
+   so a subtree can paint itself in a theme the app is not currently
+   wearing — that is how the onboarding theme previews show light,
+   dark and midnight side by side without hardcoding a single hex.
+   Only the palette is scoped that way: the derived block below is
+   computed on :root and inherited, so a preview stays on --bg /
+   --panel / --border / --text / --accent.
    ═══════════════════════════════════════════════════════════ */
 
 :root {
@@ -29,7 +37,8 @@
    ground is deliberately warm and slightly darker than the
    panels so the inset workspace reads as recessed stone. */
 :root,
-:root[data-theme="light"] {
+:root[data-theme="light"],
+[data-palette="light"] {
   color-scheme: light;
 
   --bg: #edeae4;
@@ -66,6 +75,7 @@
 
 /* ── Dark — basalt ───────────────────────────────────────── */
 :root[data-theme="dark"],
+[data-palette="dark"],
 .dark {
   color-scheme: dark;
 
@@ -107,7 +117,8 @@
    shared block below, which is what previously broke:
    midnight used to fall back to the LIGHT field/scrollbar/
    shadow values. */
-:root[data-theme="midnight"] {
+:root[data-theme="midnight"],
+[data-palette="midnight"] {
   color-scheme: dark;
 
   --bg: #0c0e10;
