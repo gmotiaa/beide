@@ -10,6 +10,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const PATCHED = "5.0.9";
+// dist.integrity of the patched tarball — REQUIRED in the lock entry, or
+// `npm ci` (CI!) refuses the lockfile outright.
+const PATCHED_INTEGRITY =
+  "sha512-ScQ4IuvIEF1TMlP7Zt+vjJ//9zlPb2SDcxWxM3bk8s6t6GGdJ7KO1dCcTidOPJKePW30LE/2cT7wCyPho9/Wxg==";
 const NESTED = join(
   "node_modules",
   "@earendil-works",
@@ -52,7 +56,7 @@ try {
       lock.packages[key].version = PATCHED;
       lock.packages[key].resolved =
         `https://registry.npmjs.org/brace-expansion/-/brace-expansion-${PATCHED}.tgz`;
-      delete lock.packages[key].integrity;
+      lock.packages[key].integrity = PATCHED_INTEGRITY;
       writeFileSync(lockPath, JSON.stringify(lock, null, 2) + "\n");
     }
   }
