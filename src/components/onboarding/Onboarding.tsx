@@ -1,12 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  IconFolder,
-  IconMap2,
-  IconRobot,
+  IconMessageCircle,
   IconShieldCheck,
   IconSparkles,
   IconTerminal2,
+  IconWand,
 } from "@tabler/icons-react";
 import { Avatar, AvatarFallback } from "../ui/avatar";
 import { Badge } from "../ui/badge";
@@ -27,9 +26,18 @@ import { useAuthStore } from "../../stores/auth";
 import { useSettingsStore } from "../../stores/settings";
 import type { ThemeId, LanguageId, PermissionMode } from "../../lib/types";
 import { AccountForm } from "./AccountForm";
+import { ChatDemo, InlineEditDemo, TerminalDemo } from "./demos";
 
 const STEPS = ["welcome", "features", "settings", "account"] as const;
 type Step = (typeof STEPS)[number];
+
+/** How long each showcase demo plays before auto-advancing to the next. */
+const DEMO_ROTATE_MS = 8000;
+
+function prefersReducedMotion(): boolean {
+  if (typeof window === "undefined" || !window.matchMedia) return false;
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
 
 function ChoicePill({
   active,
@@ -75,6 +83,7 @@ export function Onboarding() {
   const updateSettings = useSettingsStore((s) => s.update);
 
   const [signingOut, setSigningOut] = useState(false);
+  const [demoIdx, setDemoIdx] = useState(0);
 
   const idx = Math.max(0, STEPS.indexOf(step as Step));
   const progress = ((idx + 1) / STEPS.length) * 100;
@@ -87,26 +96,38 @@ export function Onboarding() {
     account: t("onboarding.stepAccount"),
   };
 
-  const features = [
+  const demos = [
     {
-      icon: IconMap2,
-      title: t("onboarding.featurePlanTitle"),
-      body: t("onboarding.featurePlanBody"),
-      chip: "readonly",
+      icon: IconMessageCircle,
+      tab: t("onboarding.demoChatTab"),
+      caption: t("onboarding.demoChatCaption"),
+      render: () => <ChatDemo />,
     },
     {
-      icon: IconRobot,
-      title: t("onboarding.featureAgentTitle"),
-      body: t("onboarding.featureAgentBody"),
-      chip: "tools",
+      icon: IconWand,
+      tab: t("onboarding.demoEditTab"),
+      caption: t("onboarding.demoEditCaption"),
+      render: () => <InlineEditDemo />,
     },
     {
-      icon: IconFolder,
-      title: t("onboarding.featureContextTitle"),
-      body: t("onboarding.featureContextBody"),
-      chip: "context",
+      icon: IconTerminal2,
+      tab: t("onboarding.demoTermTab"),
+      caption: t("onboarding.demoTermCaption"),
+      render: () => <TerminalDemo />,
     },
   ] as const;
+
+  // Auto-advance the showcase while the features step is on screen. Recreated
+  // on every demoIdx change, so a manual tab click restarts the full dwell.
+  const onFeatures = currentStep === "features";
+  useEffect(() => {
+    if (!onFeatures || prefersReducedMotion()) return;
+    const id = window.setTimeout(
+      () => setDemoIdx((i) => (i + 1) % demos.length),
+      DEMO_ROTATE_MS,
+    );
+    return () => window.clearTimeout(id);
+  }, [onFeatures, demoIdx, demos.length]);
 
   const next = () => {
     if (idx < STEPS.length - 1) setStep(STEPS[idx + 1]!);
@@ -133,9 +154,11 @@ export function Onboarding() {
       aria-label={t("onboarding.ariaLabel")}
     >
       <div className="onboarding__bg" aria-hidden>
+        <div className="onboarding__aurora" />
         <div className="onboarding__orb onboarding__orb--a" />
         <div className="onboarding__orb onboarding__orb--b" />
         <div className="onboarding__grid" />
+        <div className="onboarding__noise" />
       </div>
 
       <div className="onboarding__frame">
@@ -229,7 +252,9 @@ export function Onboarding() {
                 <Badge variant="secondary" className="w-fit font-normal">
                   {t("onboarding.badgeWelcome")}
                 </Badge>
-                <h1>{t("onboarding.welcomeTitle")}</h1>
+                <h1 className="onboarding__h1-gradient">
+                  {t("onboarding.welcomeTitle")}
+                </h1>
                 <p className="onboarding__lead">{t("onboarding.welcomeLead")}</p>
 
                 <div className="onboarding__hero-cards">
@@ -263,23 +288,43 @@ export function Onboarding() {
                   {t("onboarding.featuresLead")}
                 </p>
 
-                <div className="onboarding__feature-grid">
-                  {features.map((f) => (
-                    <Card key={f.chip} size="sm" className="onboarding__feature-card">
-                      <CardHeader className="gap-2">
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="onboarding__feature-icon">
-                            <f.icon className="size-5" stroke={1.6} />
-                          </div>
-                          <Badge variant="outline" className="font-normal">
-                            {f.chip}
-                          </Badge>
-                        </div>
-                        <CardTitle>{f.title}</CardTitle>
-                        <CardDescription>{f.body}</CardDescription>
-                      </CardHeader>
-                    </Card>
-                  ))}
+                <div className="onboarding__showcase">
+                  <div
+                    className="onboarding__showcase-tabs"
+                    role="tablist"
+                    aria-label={t("onboarding.featuresTitle")}
+                  >
+                    {demos.map((d, i) => (
+                      <button
+                        key={d.tab}
+                        type="button"
+                        role="tab"
+                        aria-selected={i === demoIdx}
+                        className={cn(
+                          "onboarding__showcase-tab",
+                          i === demoIdx && "is-active",
+                        )}
+                        onClick={() => setDemoIdx(i)}
+                      >
+                        <d.icon className="size-4" stroke={1.75} />
+                        <span>{d.tab}</span>
+                        {i === demoIdx && (
+                          // Keyed by demoIdx so the fill restarts with each demo.
+                          <i
+                            key={`progress-${demoIdx}`}
+                            className="onboarding__showcase-progress"
+                          />
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                  {/* Keyed remount restarts the CSS loop from frame zero. */}
+                  <div className="onboarding__showcase-stage" key={demoIdx}>
+                    {demos[demoIdx]!.render()}
+                  </div>
+                  <p className="onboarding__showcase-caption" key={`cap-${demoIdx}`}>
+                    {demos[demoIdx]!.caption}
+                  </p>
                 </div>
               </section>
             )}

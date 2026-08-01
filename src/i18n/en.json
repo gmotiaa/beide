@@ -483,7 +483,20 @@
     "otpLabel": "Code from the email",
     "otpConfirm": "Confirm",
     "otpNoEmail": "Didn't get the email?",
-    "otpResend": "Send again"
+    "otpResend": "Send again",
+    "demoChatTab": "Agent chat",
+    "demoEditTab": "Ctrl+K edits",
+    "demoTermTab": "Terminal",
+    "demoChatCaption": "The agent sees your project: the @ menu attaches files, terminal output and codebase search right into the message.",
+    "demoEditCaption": "Select code and press Ctrl+K — the agent rewrites it in place, the change is visible immediately.",
+    "demoTermCaption": "A test failed? The agent reads the terminal output and fixes the cause itself.",
+    "demoChatUserMsg": "fix the bug in @auth.ts",
+    "demoChatReply": "Found it: the token was never refreshed after the session expired. Fixing…",
+    "demoChatChip": "auth.ts fixed",
+    "demoMentionSearch": "codebase search",
+    "demoEditPrompt": "guard against null",
+    "demoEditApplied": "Applied",
+    "demoTermFix": "Fix with AI"
   },
   "agentElements": {
     "planning": "Thinking…",

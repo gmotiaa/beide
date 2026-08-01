@@ -23,9 +23,11 @@ export function AuthGate() {
       aria-label={t("authGate.ariaLabel")}
     >
       <div className="onboarding__bg" aria-hidden>
+        <div className="onboarding__aurora" />
         <div className="onboarding__orb onboarding__orb--a" />
         <div className="onboarding__orb onboarding__orb--b" />
         <div className="onboarding__grid" />
+        <div className="onboarding__noise" />
       </div>
 
       <div className="onboarding__frame onboarding__frame--narrow">

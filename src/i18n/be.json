@@ -483,7 +483,20 @@
     "otpLabel": "Код з ліста",
     "otpConfirm": "Пацвердзіць",
     "otpNoEmail": "Не прыйшоў ліст?",
-    "otpResend": "Адправіць зноў"
+    "otpResend": "Адправіць зноў",
+    "demoChatTab": "Чат з агентам",
+    "demoEditTab": "Праўка Ctrl+K",
+    "demoTermTab": "Тэрмінал",
+    "demoChatCaption": "Агент бачыць праект: меню @ дадае файлы, вывад тэрмінала і пошук па кодзе проста ў паведамленне.",
+    "demoEditCaption": "Вылучыце код і націсніце Ctrl+K — агент перапіша яго на месцы, змена бачная адразу.",
+    "demoTermCaption": "Тэст упаў? Агент чытае вывад тэрмінала і выпраўляе прычыну сам.",
+    "demoChatUserMsg": "выпраў баг у @auth.ts",
+    "demoChatReply": "Знайшоў прычыну: токен не абнаўляўся пасля заканчэння сесіі. Выпраўляю…",
+    "demoChatChip": "auth.ts выпраўлены",
+    "demoMentionSearch": "пошук па кодзе",
+    "demoEditPrompt": "дадай абарону ад null",
+    "demoEditApplied": "Ужыта",
+    "demoTermFix": "Выправіць з ШІ"
   },
   "agentElements": {
     "planning": "Думаю…",
