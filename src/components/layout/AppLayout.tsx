@@ -16,6 +16,7 @@ import { SearchPanel } from "../sidebar/SearchPanel";
 import { GitPanel } from "../git/GitPanel";
 import { ChatPanel } from "../chat/ChatPanel";
 import { DiffModal } from "../diff/DiffModal";
+import { Tour } from "../onboarding/Tour";
 import { SettingsView } from "../settings/SettingsView";
 import { PreviewPanel } from "../preview/PreviewPanel";
 import { TerminalPanel } from "../terminal/TerminalPanel";
@@ -277,6 +278,10 @@ export function AppLayout() {
         </div>
       </div>
       <StatusBar />
+      {/* One-time feature tour: AppLayout only mounts after the first-run
+          intro / onboarding, so this cannot overlap them. Shows once, keyed
+          on localStorage "beide.tourDone" (see Tour.tsx). */}
+      <Tour />
       <DiffModal />
       <CommandPalette
         open={paletteOpen}

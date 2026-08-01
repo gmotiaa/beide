@@ -25,6 +25,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Kbd, KbdGroup } from "@/components/ui/kbd";
 import { Spinner } from "@/components/ui/spinner";
+import { RecentProjects } from "../workspace/RecentProjects";
 import { TabBar } from "./TabBar";
 import { AgentChangesBar } from "./AgentChangesBar";
 import { MarkdownPreview } from "./MarkdownPreview";
@@ -103,11 +104,14 @@ function EditorWelcome({
   title,
   body,
   action,
+  extra,
   showShortcuts,
 }: {
   title: string;
   body: string;
   action?: ReactNode;
+  /** Extra block under the action — the recent-projects list on the no-workspace state. */
+  extra?: ReactNode;
   showShortcuts?: boolean;
 }) {
   const { t } = useTranslation();
@@ -125,6 +129,8 @@ function EditorWelcome({
         <p className="editor-empty__body">{body}</p>
 
         {action && <div className="editor-empty__action">{action}</div>}
+
+        {extra && <div className="w-full max-w-lg">{extra}</div>}
 
         {showShortcuts && (
           <div className="editor-empty__grid">
@@ -206,6 +212,7 @@ export function EditorArea({ emptyAction }: EditorAreaProps) {
   const theme = useSettingsStore((s) => s.settings.theme);
   const rootPath = useWorkspaceStore((s) => s.rootPath);
   const openFolder = useWorkspaceStore((s) => s.openFolder);
+  const workspaceError = useWorkspaceStore((s) => s.error);
 
   const active = tabs.find((tab) => tab.path === activePath) ?? null;
   const lastError = useEditorStore((s) => s.lastError);
@@ -563,6 +570,19 @@ export function EditorArea({ emptyAction }: EditorAreaProps) {
                 {t("common.openFolder")}
               </Button>
             )
+          }
+          extra={
+            <>
+              {/* A recent entry whose folder is gone fails in openFolderPath
+                  and lands here — this is the only surface for that error
+                  while no workspace is open. */}
+              {workspaceError && (
+                <p className="mb-2 text-center text-xs text-destructive">
+                  {workspaceError}
+                </p>
+              )}
+              <RecentProjects />
+            </>
           }
         />
       </div>

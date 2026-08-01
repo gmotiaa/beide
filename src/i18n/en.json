@@ -119,7 +119,14 @@
     "commit": "Commit",
     "generate": "Generate a commit message with AI",
     "commitFailed": "Commit failed",
-    "aiFailed": "Could not generate a commit message"
+    "aiFailed": "Could not generate a commit message",
+    "review": "Review pending changes with AI",
+    "reviewTitle": "AI review",
+    "reviewRunning": "Reviewing changes…",
+    "reviewFailed": "Could not review the changes",
+    "reviewCollapse": "Collapse review",
+    "reviewExpand": "Expand review",
+    "reviewDismiss": "Dismiss review"
   },
   "preview": {
     "title": "Preview",
@@ -201,7 +208,8 @@
         "label": "Build from mockup",
         "value": "Build the interface from the attached screenshot: markup + styles matching the project stack."
       }
-    }
+    },
+    "imagesUnsupportedHint": "This model can't see images — pick a vision-capable model."
   },
   "diff": {
     "title": "Confirm action",
@@ -557,5 +565,26 @@
     "lightboxPrev": "Previous image (←)",
     "lightboxNext": "Next image (→)",
     "lightboxGoTo": "Go to image {{index}}"
+  },
+  "welcome": {
+    "recentProjects": "Recent projects"
+  },
+  "tour": {
+    "ariaLabel": "Feature tour",
+    "mentionsTitle": "The @ menu in chat",
+    "mentionsBody": "Type @ in the message box to attach files, the terminal tail, or a codebase search (@codebase <query>) as context for the agent.",
+    "inlineEditTitle": "Inline edit with Ctrl+K",
+    "inlineEditBody": "Select code in the editor and press Ctrl+K — the agent rewrites the selection or the current line in place.",
+    "paletteTitle": "Command palette",
+    "paletteBody": "Ctrl+Shift+P (or F1) opens the palette: jump to files and reach every app command from one place.",
+    "terminalTitle": "Terminal tabs",
+    "terminalBody": "Ctrl+` opens the built-in terminal: up to 8 tabs, the + button adds one, and the shell picker next to it switches between PowerShell, cmd and more.",
+    "modelsTitle": "Model picker and plan limits",
+    "modelsBody": "The model button at the bottom of the chat composer switches models; the status bar shows the active one, and plan limits live in Settings.",
+    "stepCounter": "Step {{current}} of {{total}}",
+    "skip": "Skip",
+    "back": "Back",
+    "next": "Next",
+    "done": "Done"
   }
 }

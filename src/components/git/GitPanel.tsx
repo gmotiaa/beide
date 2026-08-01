@@ -2,6 +2,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkspaceStore } from "../../stores/workspace";
 import { getBeide, onBeide } from "../../lib/ipc";
+import {
+  REVIEW_DIFF_CAP,
+  REVIEW_SYSTEM,
+  buildReviewPrompt,
+} from "../../lib/ai-review";
+// Same markdown stack as chat and the editor preview — hard rule 7 in AGENTS.md.
+import { Markdown } from "../agent-elements/markdown";
 import { Button } from "../ui/button";
 
 interface GitFileEntry {
@@ -73,9 +80,16 @@ export function GitPanel() {
   const [committing, setCommitting] = useState(false);
   const [aiBusy, setAiBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [review, setReview] = useState<string | null>(null);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+  const [reviewBusy, setReviewBusy] = useState(false);
+  const [reviewCollapsed, setReviewCollapsed] = useState(false);
 
   // Guards against out-of-order async results after quick clicks/refreshes.
   const diffSeq = useRef(0);
+  // Same idea for reviews: dismissals and workspace switches invalidate an
+  // in-flight ai.complete so its late result never resurfaces.
+  const reviewSeq = useRef(0);
 
   const refresh = useCallback(async () => {
     const api = getBeide();
@@ -102,6 +116,10 @@ export function GitPanel() {
     setSelected(null);
     setDiff("");
     setError(null);
+    reviewSeq.current++;
+    setReview(null);
+    setReviewError(null);
+    setReviewBusy(false);
     void refresh();
   }, [refresh]);
 
@@ -240,6 +258,67 @@ export function GitPanel() {
     }
   };
 
+  const runReview = async () => {
+    const api = getBeide();
+    if (!api || reviewBusy) return;
+    if (staged.length === 0 && changes.length === 0) return;
+    const seq = ++reviewSeq.current;
+    setReviewBusy(true);
+    setReview(null);
+    setReviewError(null);
+    setReviewCollapsed(false);
+    try {
+      // Staged and unstaged sides of every file; "MM" files legitimately
+      // contribute two different diffs.
+      let combined = "";
+      const untracked: string[] = [];
+      const targets = [
+        ...staged.map((f) => ({ file: f, staged: true })),
+        ...changes.map((f) => ({ file: f, staged: false })),
+      ];
+      for (const { file, staged: stagedSide } of targets) {
+        if (combined.length >= REVIEW_DIFF_CAP) break;
+        // `git diff` prints nothing for untracked files; list them instead.
+        if (file.code === "U") {
+          untracked.push(file.path);
+          continue;
+        }
+        try {
+          const r = await api.git.diff(file.path, stagedSide);
+          if (r.diff) combined += `${r.diff}\n`;
+        } catch {
+          // one unreadable diff should not sink the whole review
+        }
+      }
+      if (untracked.length > 0) {
+        combined += `\nUntracked files (content not shown):\n${untracked
+          .map((p) => `- ${p}`)
+          .join("\n")}\n`;
+      }
+      // Binary-only changes: give the model at least the file list.
+      if (!combined.trim()) {
+        combined = targets
+          .map(({ file }) => `${file.code} ${file.path}`)
+          .join("\n");
+      }
+      const res = await api.ai.complete({
+        prompt: buildReviewPrompt(combined),
+        system: REVIEW_SYSTEM,
+        maxTokens: 1_000,
+      });
+      if (reviewSeq.current !== seq) return;
+      if (res.ok && res.text?.trim()) {
+        setReview(res.text.trim());
+      } else {
+        setReviewError(res.error || t("git.reviewFailed"));
+      }
+    } catch {
+      if (reviewSeq.current === seq) setReviewError(t("git.reviewFailed"));
+    } finally {
+      if (reviewSeq.current === seq) setReviewBusy(false);
+    }
+  };
+
   if (!rootPath) {
     return (
       <div className="editor-empty" style={{ padding: 20 }}>
@@ -334,6 +413,62 @@ export function GitPanel() {
         )}
       </div>
 
+      {(reviewBusy || review !== null || reviewError !== null) && (
+        <section className="git-panel__diff" aria-label={t("git.reviewTitle")}>
+          <div className="git-panel__section-title">
+            <span style={{ flex: 1 }}>{t("git.reviewTitle")}</span>
+            {/* __action buttons live at opacity 0 outside a hovered file row;
+                these are always visible, hence the inline override. */}
+            {review !== null && (
+              <button
+                type="button"
+                className="git-panel__action"
+                style={{ opacity: 1 }}
+                title={
+                  reviewCollapsed ? t("git.reviewExpand") : t("git.reviewCollapse")
+                }
+                aria-label={
+                  reviewCollapsed ? t("git.reviewExpand") : t("git.reviewCollapse")
+                }
+                aria-expanded={!reviewCollapsed}
+                onClick={() => setReviewCollapsed((c) => !c)}
+              >
+                {reviewCollapsed ? "▸" : "▾"}
+              </button>
+            )}
+            <button
+              type="button"
+              className="git-panel__action"
+              style={{ opacity: 1 }}
+              title={t("git.reviewDismiss")}
+              aria-label={t("git.reviewDismiss")}
+              onClick={() => {
+                reviewSeq.current++;
+                setReview(null);
+                setReviewError(null);
+                setReviewBusy(false);
+              }}
+            >
+              ×
+            </button>
+          </div>
+          {reviewBusy ? (
+            <div className="git-panel__empty">{t("git.reviewRunning")}</div>
+          ) : reviewError ? (
+            <div
+              className="git-panel__error"
+              style={{ padding: "0 10px 8px" }}
+            >
+              {reviewError}
+            </div>
+          ) : review !== null && !reviewCollapsed ? (
+            <div style={{ padding: "0 10px 8px", userSelect: "text" }}>
+              <Markdown content={review} />
+            </div>
+          ) : null}
+        </section>
+      )}
+
       {selected && (
         <div className="git-panel__diff">
           {diff ? (
@@ -374,6 +509,17 @@ export function GitPanel() {
             onClick={() => void generateMessage()}
           >
             {aiBusy ? "…" : "✨"}
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            title={t("git.review")}
+            aria-label={t("git.review")}
+            disabled={(staged.length === 0 && changes.length === 0) || reviewBusy}
+            onClick={() => void runReview()}
+          >
+            {reviewBusy ? "…" : "🔍"}
           </Button>
         </div>
       </div>

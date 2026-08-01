@@ -128,6 +128,41 @@ export function ChatPanel() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragOver, setIsDragOver] = useState(false);
 
+  // Pasting/dropping an image against a text-only model used to be a silent
+  // no-op — onPaste/onDrop just returned early — so the user assumed the
+  // feature was broken. This is a self-clearing timed hint shown through the
+  // same infoBar slot the composer already uses for other notices.
+  const [imagesUnsupportedNotice, setImagesUnsupportedNotice] = useState(false);
+  const imagesUnsupportedTimeoutRef = useRef<number | null>(null);
+
+  const dismissImagesUnsupportedNotice = useCallback(() => {
+    setImagesUnsupportedNotice(false);
+    if (imagesUnsupportedTimeoutRef.current !== null) {
+      window.clearTimeout(imagesUnsupportedTimeoutRef.current);
+      imagesUnsupportedTimeoutRef.current = null;
+    }
+  }, []);
+
+  const showImagesUnsupportedNotice = useCallback(() => {
+    setImagesUnsupportedNotice(true);
+    if (imagesUnsupportedTimeoutRef.current !== null) {
+      window.clearTimeout(imagesUnsupportedTimeoutRef.current);
+    }
+    imagesUnsupportedTimeoutRef.current = window.setTimeout(() => {
+      setImagesUnsupportedNotice(false);
+      imagesUnsupportedTimeoutRef.current = null;
+    }, 5000);
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (imagesUnsupportedTimeoutRef.current !== null) {
+        window.clearTimeout(imagesUnsupportedTimeoutRef.current);
+      }
+    },
+    [],
+  );
+
   const modes = useMemo(
     () => [
       {
@@ -419,18 +454,25 @@ export function ChatPanel() {
   const onPaste = useCallback(
     (e: React.ClipboardEvent) => {
       const items = e.clipboardData?.items;
-      if (!items || !supportsImages) return;
-      for (const item of Array.from(items)) {
-        if (item.type.startsWith("image/")) {
-          e.preventDefault();
-          const file = item.getAsFile();
-          if (file) {
-            void fileToChatImage(file).then((img) => img && addImage(img));
-          }
+      if (!items) return;
+      const imageItems = Array.from(items).filter((item) =>
+        item.type.startsWith("image/"),
+      );
+      if (imageItems.length === 0) return;
+      if (!supportsImages) {
+        e.preventDefault();
+        showImagesUnsupportedNotice();
+        return;
+      }
+      for (const item of imageItems) {
+        e.preventDefault();
+        const file = item.getAsFile();
+        if (file) {
+          void fileToChatImage(file).then((img) => img && addImage(img));
         }
       }
     },
-    [addImage, supportsImages],
+    [addImage, supportsImages, showImagesUnsupportedNotice],
   );
 
   // The chips belong to the empty state, not to the composer: docked under the
@@ -470,8 +512,21 @@ export function ChatPanel() {
     if (retryNotice) {
       return { title: retryNotice, description: t("chat.providerRetryHint") };
     }
+    if (imagesUnsupportedNotice) {
+      return {
+        title: t("chat.imagesUnsupportedHint"),
+        onClose: dismissImagesUnsupportedNotice,
+      };
+    }
     return undefined;
-  }, [ready, retryNotice, openFolder, t]);
+  }, [
+    ready,
+    retryNotice,
+    imagesUnsupportedNotice,
+    dismissImagesUnsupportedNotice,
+    openFolder,
+    t,
+  ]);
 
   return (
     <TooltipProvider delay={200}>
@@ -487,14 +542,24 @@ export function ChatPanel() {
         data-ready={ready ? "1" : "0"}
         aria-label={t("chat.ariaLabel")}
         onDragOver={(e) => {
-          if (!supportsImages) return;
+          // preventDefault must run regardless of model support, or the
+          // browser's own "no drop" handling swallows the event before it
+          // ever reaches onDrop — which is where the unsupported-model hint
+          // is shown. The drag-ring highlight itself stays vision-only.
           e.preventDefault();
-          setIsDragOver(true);
+          if (supportsImages) setIsDragOver(true);
         }}
         onDragLeave={() => setIsDragOver(false)}
         onDrop={(e) => {
           e.preventDefault();
           setIsDragOver(false);
+          if (!supportsImages) {
+            const hasImage = Array.from(e.dataTransfer.files).some((file) =>
+              file.type.startsWith("image/"),
+            );
+            if (hasImage) showImagesUnsupportedNotice();
+            return;
+          }
           void onFilesPicked(e.dataTransfer.files);
         }}
       >

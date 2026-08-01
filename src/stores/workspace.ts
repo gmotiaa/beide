@@ -6,6 +6,7 @@ import {
   saveUserSettingsCloud,
 } from "../lib/supabase-settings";
 import i18n from "../i18n";
+import { pushRecentProject } from "../lib/recent-projects";
 import { useAgentStore } from "./agent";
 import { useChatStore } from "./chat";
 import { useEditorStore } from "./editor";
@@ -20,6 +21,7 @@ interface WorkspaceState {
 
   bootstrap: () => Promise<void>;
   openFolder: () => Promise<void>;
+  openFolderPath: (path: string) => Promise<void>;
   refreshTree: () => Promise<void>;
   toggleDir: (path: string) => Promise<void>;
   loadChildren: (path: string) => Promise<FileNode[]>;
@@ -98,6 +100,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       }
       const tree = await readRootTree();
       set({ rootPath: root, tree, loading: false, childrenCache: {}, expanded: {} });
+      // Counts as a successful open: seeds the recent list on first run after
+      // the feature landed and keeps the active project at the top of it.
+      pushRecentProject(root);
       if (restored) {
         // ChatPanel mounted before the root existed, so its own restore call
         // found nothing — re-run it now that main knows the workspace.
@@ -118,22 +123,39 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     if (!api) return;
     try {
       const selected = await api.workspace.pickFolder();
-      if (!selected || sameRoot(get().rootPath, selected)) return;
+      if (!selected) return;
+      await get().openFolderPath(selected);
+    } catch (e) {
+      set({
+        loading: false,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+  },
 
-      const editor = useEditorStore.getState();
-      if (
-        editor.tabs.some((tab) => tab.dirty) &&
-        !window.confirm(i18n.t("editor.changeWorkspaceUnsavedConfirm"))
-      ) {
-        return;
-      }
+  // Opens a known root directly (recent-projects list) and is the shared tail
+  // of `openFolder`. A failed open — e.g. a recent entry whose folder was
+  // deleted — lands in `error` and leaves the current workspace untouched.
+  openFolderPath: async (path) => {
+    const api = getBeide();
+    if (!api) return;
+    if (sameRoot(get().rootPath, path)) return;
 
+    const editor = useEditorStore.getState();
+    if (
+      editor.tabs.some((tab) => tab.dirty) &&
+      !window.confirm(i18n.t("editor.changeWorkspaceUnsavedConfirm"))
+    ) {
+      return;
+    }
+
+    try {
       // This must finish while main still points at the outgoing workspace;
       // otherwise the transcript would be written into the new project's
       // `.beide/sessions` directory.
       await useChatStore.getState().flushBeforeWorkspaceChange();
       set({ loading: true, error: null });
-      const root = await api.workspace.setRoot(selected);
+      const root = await api.workspace.setRoot(path);
       useEditorStore.getState().resetWorkspace();
       useChatStore.getState().resetWorkspace();
       const tree = await api.workspace.readDir();
@@ -144,6 +166,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         childrenCache: {},
         expanded: {},
       });
+      pushRecentProject(root);
       void useAgentStore.getState().refreshStatus();
       // Cloud copy of the last workspace — restores on a fresh machine.
       void saveUserSettingsCloud({ last_workspace_path: root });
