@@ -19,7 +19,8 @@ the preload without a reason: it is the whitelist for main → renderer pushes.
 
 | Channel | Renderer call | Notes |
 | --- | --- | --- |
-| `workspace:open` | `workspace.open()` | native folder dialog; returns the path or `null` |
+| `workspace:pickFolder` | `workspace.pickFolder()` | native folder dialog only; does not mutate the active workspace |
+| `workspace:setRoot` | `workspace.setRoot(path)` | validates and activates a picked directory after renderer dirty/session guards |
 | `workspace:getRoot` | `workspace.getRoot()` | `null` until a folder is opened |
 | `workspace:readDir` | `workspace.readDir(path?)` | gitignore-aware, cached 5 s |
 | `workspace:readFile` / `workspace:writeFile` | same | editor saves bypass the agent permission gate by design |
@@ -41,7 +42,8 @@ the preload without a reason: it is the whitelist for main → renderer pushes.
 | `session:save` | `session.save(id, messages)` | full replace of the transcript |
 | `session:delete` | `session.delete(id)` | |
 | `shell:run` | `shell.run(command)` | `cmd.exe /c` on Windows, 30 s timeout — not a PTY |
-| `usage:get` / `usage:increment` | same | plan + rolling windows |
+| `usage:get` / `usage:increment` | same | local plan + rolling windows |
+| `usage:setPlan` / `usage:addCredits` / `usage:reset` | same | local-only debug mutations; cloud billing still goes through Supabase RPCs |
 | `window:minimize` / `maximize` / `close` / `isMaximized` | same | custom title bar |
 
 Handlers return either a bare value or the structured envelope
@@ -57,7 +59,8 @@ Whitelisted in `electron/preload.ts` → `ALLOWED_EVENTS`:
 | --- | --- | --- |
 | `agent:event` | pi runtime events (deltas, tool start/end, errors, end of turn) | `useAgentStore.handleEvent` |
 | `agent:permission` | `PermissionRequest` | `useAgentStore` → `DiffModal` |
-| `workspace:changed` | `{ path?: string }` | file tree refresh + reload of non-dirty tabs |
+| `workspace:changed` | `{ path?: string, paths?: string[], restored?: string }` | file tree refresh + reload of non-dirty tabs; restore refreshes every clean tab |
+| `window:close-requested` | `{ dirty: boolean }` | main pauses close so renderer can flush chat and, when needed, confirm dirty editor buffers |
 
 Subscribe with `window.beide.on(channel, cb)`; it returns an unsubscribe
 function — always call it in the effect cleanup.

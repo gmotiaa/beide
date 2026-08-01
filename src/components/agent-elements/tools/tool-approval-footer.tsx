@@ -1,4 +1,5 @@
 import { memo, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 export type ToolApproval = {
   approveLabel?: string;
@@ -18,14 +19,19 @@ export const ToolApprovalFooter = memo(function ToolApprovalFooter({
   onApprove,
   onReject,
 }: ToolApprovalFooterProps) {
+  const { t } = useTranslation();
   const [decision, setDecision] = useState<"approved" | "rejected" | null>(
     null,
   );
 
   const approveText =
-    decision === "approved" ? "Approved" : (approveLabel ?? "Next");
+    decision === "approved"
+      ? t("agentElements.planApproved")
+      : (approveLabel ?? t("agentElements.approvalNext"));
   const rejectText =
-    decision === "rejected" ? "Skipped" : (rejectLabel ?? "Skip");
+    decision === "rejected"
+      ? t("agentElements.approvalSkipped")
+      : (rejectLabel ?? t("agentElements.approvalSkip"));
 
   const handleApprove = () => {
     if (decision) return;
@@ -40,14 +46,16 @@ export const ToolApprovalFooter = memo(function ToolApprovalFooter({
   };
 
   const statusConfig = useMemo(() => {
-    if (decision === "approved") return { label: "Waiting", dots: true };
-    if (decision === "rejected") return { label: "Canceled", dots: false };
-    if (isPending) return { label: "Starting", dots: true };
+    if (decision === "approved")
+      return { label: t("agentElements.approvalWaiting"), dots: true };
+    if (decision === "rejected")
+      return { label: t("agentElements.approvalCanceled"), dots: false };
+    if (isPending) return { label: t("agentElements.approvalStarting"), dots: true };
     // Default "ready" state — buttons themselves communicate the affordance,
     // an extra "Ready" label just adds noise. Render an empty spacer so the
     // buttons stay right-aligned via justify-between.
     return null;
-  }, [decision, isPending]);
+  }, [decision, isPending, t]);
 
   return (
     <div className="flex items-center justify-between py-1 pl-3 pr-2 border-t border-border bg-an-tool-background">

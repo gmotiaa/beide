@@ -1,4 +1,5 @@
 import { memo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   IconChevronsDown,
   IconChevronsUp,
@@ -41,6 +42,7 @@ export const PlanTool = memo(function PlanTool({
   part,
   chatStatus,
 }: PlanToolProps) {
+  const { t } = useTranslation();
   const { isPending } = getToolStatus(part, chatStatus);
   const plan = part.input?.plan;
   const [isExpanded, setIsExpanded] = useState(false);
@@ -52,9 +54,11 @@ export const PlanTool = memo(function PlanTool({
   const summary = plan.summary?.trim() ?? "";
   const hasSummary = summary.length > 0;
 
-  const approveLabel = part.input?.approveLabel ?? "Approve";
+  const approveLabel = part.input?.approveLabel ?? t("agentElements.planApprove");
   const isAlreadyApproved = part.input?.approved || isApproved;
-  const approveText = isAlreadyApproved ? "Approved" : approveLabel;
+  const approveText = isAlreadyApproved
+    ? t("agentElements.planApproved")
+    : approveLabel;
 
   const handleApprove = () => {
     if (isAlreadyApproved) return;
@@ -80,7 +84,11 @@ export const PlanTool = memo(function PlanTool({
         <button
           type="button"
           onClick={() => setIsExpanded((prev) => !prev)}
-          aria-label={isExpanded ? "Collapse plan" : "Expand plan"}
+          aria-label={
+            isExpanded
+              ? t("agentElements.planCollapse")
+              : t("agentElements.planExpand")
+          }
           className="size-5 inline-flex items-center justify-center text-an-tool-color-muted"
         >
           {isExpanded ? (
@@ -116,7 +124,7 @@ export const PlanTool = memo(function PlanTool({
                       onClick={() => setIsExpanded(true)}
                       className="-mx-2 h-5 px-1.5 rounded-[4px] text-xs text-muted-foreground hover:text-an-tool-color"
                     >
-                      Read detailed plan
+                      {t("agentElements.planReadDetailed")}
                     </button>
                     {!isAlreadyApproved && (
                       <button
@@ -133,7 +141,7 @@ export const PlanTool = memo(function PlanTool({
             </div>
           ) : (
             <div className="text-xs text-an-tool-color-muted">
-              No plan summary provided.
+              {t("agentElements.planNoSummary")}
             </div>
           )}
         </div>
@@ -145,7 +153,9 @@ export const PlanTool = memo(function PlanTool({
               onClick={() => setIsExpanded((prev) => !prev)}
               className="-mx-2 h-5 px-1.5 rounded-[4px] text-xs text-muted-foreground hover:text-an-tool-color"
             >
-              {isExpanded ? "Hide detailed plan" : "Read detailed plan"}
+              {isExpanded
+                ? t("agentElements.planHideDetailed")
+                : t("agentElements.planReadDetailed")}
             </button>
             {!isAlreadyApproved && (
               <button

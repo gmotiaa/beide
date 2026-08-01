@@ -34,9 +34,20 @@ function payloadName(index: number): string {
   return `entry_${index.toString().padStart(4, "0")}.json`;
 }
 
+function encodeBuffer(buf: Buffer): Pick<CheckpointEntryPayload, "content" | "encoding"> {
+  // NUL-only detection misclassified many binary formats as UTF-8 and changed
+  // invalid bytes to U+FFFD on restore. A byte-for-byte UTF-8 round trip is a
+  // stronger text check without introducing another dependency.
+  const utf8 = buf.toString("utf-8");
+  if (!buf.includes(0) && Buffer.from(utf8, "utf-8").equals(buf)) {
+    return { content: utf8, encoding: "utf-8" };
+  }
+  return { content: buf.toString("base64"), encoding: "base64" };
+}
+
 export class CheckpointService {
   private workspaceRoot: string | null = null;
-  private restoreChain: Promise<void> = Promise.resolve();
+  private restoreChain: Promise<string[]> = Promise.resolve([]);
 
   setWorkspace(root: string | null): void {
     this.workspaceRoot = root;
@@ -88,25 +99,14 @@ export class CheckpointService {
       const safeName = payloadName(index);
       const copyPath = join(stagingBase, safeName);
 
-      let content = "";
-      let encoding: "utf-8" | "base64" = "utf-8";
-
-      if (buf !== null) {
-        const isBinary = buf.includes(0);
-        if (isBinary) {
-          content = buf.toString("base64");
-          encoding = "base64";
-        } else {
-          content = buf.toString("utf-8");
-          encoding = "utf-8";
-        }
-      }
+      const encoded = buf === null
+        ? { content: "", encoding: "utf-8" as const }
+        : encodeBuffer(buf);
 
       const payload: CheckpointEntryPayload = {
         path: rel,
         existed: buf !== null,
-        content,
-        encoding,
+        ...encoded,
       };
       await writeFile(copyPath, JSON.stringify(payload), "utf-8");
       saved.push(rel);
@@ -198,7 +198,7 @@ export class CheckpointService {
     return out;
   }
 
-  async restore(id: string): Promise<void> {
+  async restore(id: string): Promise<string[]> {
     // Serialize restores — prevent TOCTOU when several run in parallel.
     const run = () => this.restoreImpl(id);
     this.restoreChain = this.restoreChain.then(run, run);
@@ -208,6 +208,7 @@ export class CheckpointService {
   private async restoreFromDir(dirPath: string): Promise<void> {
     const root = this.requireRoot();
     const entries = await readdir(dirPath);
+    const failures: string[] = [];
     for (const entry of entries) {
       if (entry === "meta.json") continue;
       try {
@@ -225,13 +226,18 @@ export class CheckpointService {
               : payload.content;
           await writeFile(absolute, data);
         }
-      } catch {
-        // skip entry restore failure in helper
+      } catch (error) {
+        failures.push(
+          `${entry}: ${error instanceof Error ? error.message : String(error)}`,
+        );
       }
+    }
+    if (failures.length) {
+      throw new Error(`Checkpoint rollback incomplete:\n${failures.join("\n")}`);
     }
   }
 
-  private async restoreImpl(id: string): Promise<void> {
+  private async restoreImpl(id: string): Promise<string[]> {
     const root = this.requireRoot();
     assertSafeId(id);
     const base = join(this.dir(), id);
@@ -275,22 +281,13 @@ export class CheckpointService {
       }
       const safeName = payloadName(index);
       const copyPath = join(tmpStagingDir, safeName);
-      let content = "";
-      let encoding: "utf-8" | "base64" = "utf-8";
-      if (buf !== null) {
-        if (buf.includes(0)) {
-          content = buf.toString("base64");
-          encoding = "base64";
-        } else {
-          content = buf.toString("utf-8");
-          encoding = "utf-8";
-        }
-      }
+      const encoded = buf === null
+        ? { content: "", encoding: "utf-8" as const }
+        : encodeBuffer(buf);
       const p: CheckpointEntryPayload = {
         path: rel,
         existed: buf !== null,
-        content,
-        encoding,
+        ...encoded,
       };
       await writeFile(copyPath, JSON.stringify(p), "utf-8");
     }
@@ -316,8 +313,18 @@ export class CheckpointService {
         `[CheckpointService] Restore failed for checkpoint ${id}. Rolling back to pre-restore state.`,
         restoreError,
       );
-      await this.restoreFromDir(tmpStagingDir);
-      await rm(tmpStagingDir, { recursive: true, force: true });
+      try {
+        await this.restoreFromDir(tmpStagingDir);
+      } catch (rollbackError) {
+        throw new Error(
+          `Checkpoint restore failed and rollback was incomplete: ${
+            rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
+          }`,
+          { cause: restoreError },
+        );
+      } finally {
+        await rm(tmpStagingDir, { recursive: true, force: true });
+      }
       throw restoreError;
     }
 
@@ -326,6 +333,7 @@ export class CheckpointService {
 
     // Touch meta for consumers
     void meta;
+    return targetPaths;
   }
 }
 

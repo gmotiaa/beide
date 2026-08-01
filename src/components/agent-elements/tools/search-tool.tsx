@@ -1,4 +1,5 @@
 import { memo } from "react";
+import { useTranslation } from "react-i18next";
 import type { TimelineStep, StepState } from "../types/timeline";
 import type { SourceType } from "../icons/source-icons";
 import { IconFileText } from "@tabler/icons-react";
@@ -7,6 +8,7 @@ import { useToolComplete } from "../hooks/use-tool-complete";
 import {
   mapToolInvocationToStep,
   mapToolStateToStepState,
+  partToInvocationState,
 } from "../utils/tool-adapters";
 import { cn } from "../utils/cn";
 
@@ -18,6 +20,9 @@ export type SearchGroupRichProps = {
   onStepComplete: (id: string) => void;
   results?: SearchResult[];
   defaultOpen?: boolean;
+  /** File-match count from a code search result (grep/glob), when known. */
+  matchCount?: number;
+  isError?: boolean;
 };
 
 export function SearchGroupRich({
@@ -26,16 +31,30 @@ export function SearchGroupRich({
   onStepComplete,
   results = [],
   defaultOpen,
+  matchCount,
+  isError = false,
 }: SearchGroupRichProps) {
+  const { t } = useTranslation();
   const anyAnimating = toolSteps.some((s) => stepStates[s.id] === "animating");
-  const searchQuery =
-    toolSteps.find((s) => s.searchQuery)?.searchQuery ?? "searching...";
+  const searchQuery = toolSteps.find((s) => s.searchQuery)?.searchQuery ?? "";
   const totalResults = results.length;
   // Only expose the expand affordance once there is something useful to show.
   // While the search is still streaming we have no results yet and the panel
   // header is just "Searched for <same query>" — redundant with the row
   // label. Once results arrive the panel becomes meaningful.
   const hasExpandableContent = totalResults > 0;
+
+  // beide's grep/glob results are not web-search shaped, so `results` is
+  // usually empty — "Found 0 results" for a grep that matched plenty was a
+  // lie. Prefer the rich-result count, then the code-search file count, then
+  // a neutral "done" label.
+  const completeLabel = isError
+    ? t("agentElements.searchFailed")
+    : totalResults > 0
+      ? t("agentElements.searchFoundResults", { count: totalResults })
+      : typeof matchCount === "number"
+        ? t("agentElements.searchFoundFiles", { count: matchCount })
+        : t("agentElements.searchDone");
 
   function CompleteTracker({
     step,
@@ -54,15 +73,18 @@ export function SearchGroupRich({
         <CompleteTracker key={step.id} step={step} />
       ))}
       <ToolRowBase
-        shimmerLabel="Searching..."
-        completeLabel={`Found ${totalResults} results`}
+        shimmerLabel={t("agentElements.searchRunning")}
+        completeLabel={completeLabel}
         isAnimating={anyAnimating}
+        detail={searchQuery || undefined}
         expandable={hasExpandableContent}
         defaultOpen={defaultOpen}
       >
         <div className="rounded-an-tool-border-radius overflow-hidden bg-an-tool-background border border-border">
           <div className="flex items-center px-2.5 py-0 border-b border-an-tool-border-color h-7 text-xs gap-1">
-            <span className="text-foreground font-medium">Searched for</span>{" "}
+            <span className="text-foreground font-medium">
+              {t("agentElements.searchedFor")}
+            </span>{" "}
             <span className="text-muted-foreground truncate">
               &ldquo;{searchQuery}&rdquo;
             </span>
@@ -132,29 +154,31 @@ function normalizeResults(value: unknown): SearchResult[] | undefined {
   return parsed.length > 0 ? parsed : undefined;
 }
 
+function pickMatchCount(part: SearchToolProps["part"]): number | undefined {
+  const candidates = [
+    part.output?.numFiles,
+    part.result?.numFiles,
+    (part.output?.details as { entries?: unknown } | undefined)?.entries,
+  ];
+  for (const v of candidates) {
+    if (typeof v === "number" && Number.isFinite(v) && v >= 0) return v;
+  }
+  return undefined;
+}
+
 export const SearchTool = memo(function SearchTool({
   part,
   results,
   defaultOpen,
 }: SearchToolProps) {
+  const invocationState = partToInvocationState(part.state);
   const step = mapToolInvocationToStep(part.toolCallId ?? part.id ?? "search", {
     toolName: part.type?.replace("tool-", "") || "WebSearch",
     args: part.input ?? part.args ?? {},
-    state:
-      part.state === "output-available"
-        ? "result"
-        : part.state === "input-streaming"
-          ? "partial-call"
-          : "call",
+    state: invocationState,
     result: part.output ?? part.result,
   });
-  const stepState = mapToolStateToStepState(
-    part.state === "output-available"
-      ? "result"
-      : part.state === "input-streaming"
-        ? "partial-call"
-        : "call",
-  );
+  const stepState = mapToolStateToStepState(invocationState);
   const stepStates = { [step.id]: stepState };
   const noop = () => {};
 
@@ -168,6 +192,8 @@ export const SearchTool = memo(function SearchTool({
         normalizeResults(part.output?.results) ??
         normalizeResults(part.result?.results)
       }
+      matchCount={pickMatchCount(part)}
+      isError={part.state === "output-error"}
       defaultOpen={defaultOpen}
     />
   );

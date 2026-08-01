@@ -1,5 +1,4 @@
 import * as React from "react";
-import { Outlet, Route, Routes, useLocation } from "react-router-dom";
 
 import { Footer } from "@/components/site/footer";
 import { Header } from "@/components/site/header";
@@ -22,14 +21,11 @@ const TITLES: Record<string, string> = {
   "/changelog": "Обновления — beide",
 };
 
-/** Router does not reset scroll between routes; anchors keep their own jump. */
-function ScrollToTop() {
-  const { pathname, hash } = useLocation();
-
+function PageEffects({ pathname }: { pathname: string }) {
   React.useEffect(() => {
-    if (hash) return;
+    if (window.location.hash) return;
     window.scrollTo({ top: 0, left: 0, behavior: "instant" as ScrollBehavior });
-  }, [pathname, hash]);
+  }, [pathname]);
 
   React.useEffect(() => {
     document.title = TITLES[pathname] ?? "Страница не найдена — beide";
@@ -38,32 +34,33 @@ function ScrollToTop() {
   return null;
 }
 
-function Layout() {
-  return (
-    <div className="flex min-h-screen flex-col">
-      <ScrollToTop />
-      <Header />
-      <main className="flex-1">
-        <Outlet />
-      </main>
-      <Footer />
-    </div>
-  );
+const PAGES: Record<string, React.ComponentType> = {
+  "/": Home,
+  "/features": Features,
+  "/agent": Agent,
+  "/showcase": Showcase,
+  "/docs": Docs,
+  "/download": Download,
+  "/changelog": Changelog,
+};
+
+function normalizePathname(pathname: string): string {
+  const normalized = pathname.replace(/\/+$/, "");
+  return normalized || "/";
 }
 
 export default function App() {
+  const pathname = normalizePathname(window.location.pathname);
+  const Page = PAGES[pathname] ?? NotFound;
+
   return (
-    <Routes>
-      <Route element={<Layout />}>
-        <Route path="/" element={<Home />} />
-        <Route path="/features" element={<Features />} />
-        <Route path="/agent" element={<Agent />} />
-        <Route path="/showcase" element={<Showcase />} />
-        <Route path="/docs" element={<Docs />} />
-        <Route path="/download" element={<Download />} />
-        <Route path="/changelog" element={<Changelog />} />
-        <Route path="*" element={<NotFound />} />
-      </Route>
-    </Routes>
+    <div className="flex min-h-screen flex-col">
+      <PageEffects pathname={pathname} />
+      <Header />
+      <main className="flex-1">
+        <Page />
+      </main>
+      <Footer />
+    </div>
   );
 }

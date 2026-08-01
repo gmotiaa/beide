@@ -1,5 +1,4 @@
 import * as React from "react";
-import { useNavigate } from "react-router-dom";
 
 import MagneticButton from "@/components/originkit/magnetic-button";
 
@@ -20,8 +19,8 @@ type MagneticCtaProps = {
 };
 
 /**
- * Origin Kit's magnetic button wired to the router: internal routes are handled
- * client-side, external ones fall through to a normal link.
+ * Origin Kit's magnetic button rendered as a normal link. Page navigation is
+ * deliberately browser-native; this static site does not need a router runtime.
  */
 export function MagneticCta({
   label,
@@ -29,20 +28,7 @@ export function MagneticCta({
   icon,
   variant = "solid",
 }: MagneticCtaProps) {
-  const navigate = useNavigate();
   const external = /^https?:/.test(to);
-
-  const handleClick = React.useCallback(
-    (event: React.MouseEvent<HTMLAnchorElement>) => {
-      if (external) return;
-      // Let modified clicks open a new tab the way any other link would.
-      if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0)
-        return;
-      event.preventDefault();
-      navigate(to);
-    },
-    [external, navigate, to]
-  );
 
   const solid = variant === "solid";
 
@@ -52,7 +38,6 @@ export function MagneticCta({
       icon={icon}
       link={to}
       newTab={external}
-      onClick={handleClick}
       font={FONT}
       fill={solid ? "#4fa88f" : "transparent"}
       textColor={solid ? "#0f1211" : "#e9e7e2"}

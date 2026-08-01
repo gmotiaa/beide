@@ -26,7 +26,6 @@ export * from "../src/components/agent-elements/tools/generic-tool.tsx";
 export * from "../src/components/agent-elements/tools/mcp-tool.tsx";
 export * from "../src/components/agent-elements/tools/plan-tool.tsx";
 export * from "../src/components/agent-elements/tools/search-tool.tsx";
-export * from "../src/components/agent-elements/tools/subagent-tool.tsx";
 export * from "../src/components/agent-elements/tools/thinking-tool.tsx";
 export * from "../src/components/agent-elements/tools/todo-tool.tsx";
 export * from "../src/components/agent-elements/tools/tool-approval-footer.tsx";

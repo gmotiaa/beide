@@ -51,6 +51,11 @@ export type MessageListProps = {
     userMessage?: string;
   };
   toolRenderers?: Record<string, React.ComponentType<CustomToolRendererProps>>;
+  /**
+   * Replaces the idle "thinking…" shimmer label while set — used for live
+   * status like "provider not responding, retrying".
+   */
+  planningLabelOverride?: string;
 };
 
 const SCROLL_THRESHOLD = 80;
@@ -88,13 +93,18 @@ function normalizeMessages(messages: UIMessage[]): UIMessage[] {
 }
 
 function getLastAssistantHasContent(messages: UIMessage[]) {
+  // Check every assistant message of the LAST TURN, not just the newest one:
+  // a fresh empty bubble after already-streamed text used to hide that text
+  // behind the planning row.
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     const msg = messages[i];
+    if (msg?.role === "user") break;
     if (msg?.role !== "assistant") continue;
-    return (msg.parts ?? []).some((part) => {
+    const hasContent = (msg.parts ?? []).some((part) => {
       if (isTextPart(part)) return part.text.trim().length > 0;
       return isV5ToolPart(part);
     });
+    if (hasContent) return true;
   }
   return false;
 }
@@ -179,16 +189,22 @@ function CopyButton({
   }, []);
 
   const handleCopy = () => {
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-    if (copiedTimerRef.current) {
-      window.clearTimeout(copiedTimerRef.current);
-    }
-    copiedTimerRef.current = window.setTimeout(() => {
-      setCopied(false);
-      copiedTimerRef.current = null;
-    }, 2000);
-    onCopied?.();
+    navigator.clipboard.writeText(text).then(
+      () => {
+        setCopied(true);
+        if (copiedTimerRef.current) {
+          window.clearTimeout(copiedTimerRef.current);
+        }
+        copiedTimerRef.current = window.setTimeout(() => {
+          setCopied(false);
+          copiedTimerRef.current = null;
+        }, 2000);
+        onCopied?.();
+      },
+      () => {
+        // Clipboard permission denied — don't flip to the "copied" check.
+      },
+    );
   };
   return (
     <button
@@ -287,6 +303,7 @@ export const MessageList = memo(function MessageList({
   slots,
   classNames,
   toolRenderers,
+  planningLabelOverride,
 }: MessageListProps) {
   const { t, i18n } = useTranslation();
   const chatContainerRef = useRef<HTMLDivElement>(null);
@@ -409,21 +426,20 @@ export const MessageList = memo(function MessageList({
     }
 
     let lastContentHeight = contentWrapper.getBoundingClientRect().height;
-    let prevScrollHeight = container.scrollHeight;
 
     const resizeObserver = new ResizeObserver(() => {
       const newContentHeight = contentWrapper.getBoundingClientRect().height;
       if (newContentHeight === lastContentHeight) return;
       lastContentHeight = newContentHeight;
 
-      if (!shouldAutoScrollRef.current) {
-        const newScrollHeight = container.scrollHeight;
-        if (newScrollHeight !== prevScrollHeight && prevScrollHeight > 0) {
-          const delta = newScrollHeight - prevScrollHeight;
-          container.scrollTop = container.scrollTop + delta;
-        }
+      // Follow streamed content only while pinned to the bottom. The old
+      // behavior instead added the growth delta to scrollTop when the user
+      // had scrolled UP — bottom-appended tokens dragged their reading
+      // position down by exactly the streamed amount. Content inserted above
+      // the viewport is kept stable by native scroll anchoring.
+      if (shouldAutoScrollRef.current) {
+        container.scrollTop = container.scrollHeight;
       }
-      prevScrollHeight = container.scrollHeight;
     });
 
     resizeObserver.observe(contentWrapper);
@@ -457,7 +473,7 @@ export const MessageList = memo(function MessageList({
     }
   }, [lastUserMessageId, scrollToBottomSettled]);
 
-  const planningLabel = t("agentElements.planning");
+  const planningLabel = planningLabelOverride ?? t("agentElements.planning");
   // Timestamp formatters follow the app locale (12/24-hour clock and month
   // names come from the locale defaults).
   const { timeFormatter, dateFormatter } = useMemo(

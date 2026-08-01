@@ -2,6 +2,7 @@ import { create } from "zustand";
 import type { Session, User } from "@supabase/supabase-js";
 import i18n from "../i18n";
 import { getSupabase, isSupabaseConfigured } from "../lib/supabase";
+import { useUsageStore } from "./usage";
 
 export type SignUpResult =
   | { ok: true; needsVerification: boolean; email: string }
@@ -32,6 +33,7 @@ interface AuthState {
 
 /** Kept outside the store so a re-init can drop the previous listener. */
 let authSubscription: { unsubscribe: () => void } | null = null;
+let authInitGeneration = 0;
 
 export const useAuthStore = create<AuthState>((set) => ({
   ready: false,
@@ -43,31 +45,40 @@ export const useAuthStore = create<AuthState>((set) => ({
   pendingVerifyEmail: null,
 
   init: async () => {
+    const generation = ++authInitGeneration;
+    const isCurrent = () => generation === authInitGeneration;
     authSubscription?.unsubscribe();
     authSubscription = null;
+    set({ ready: false });
     try {
       const sb = getSupabase();
       if (!sb) {
-        set({ configured: false, session: null, user: null });
+        if (isCurrent()) {
+          set({ configured: false, session: null, user: null });
+        }
         return;
       }
       const { data } = await sb.auth.getSession();
+      if (!isCurrent()) return;
       set({
         configured: true,
         session: data.session,
         user: data.session?.user ?? null,
       });
       const { data: listener } = sb.auth.onAuthStateChange((_event, session) => {
+        if (!isCurrent()) return;
         set({ session, user: session?.user ?? null });
         // Reload billing when auth changes (subscription lives in Supabase)
-        void import("./usage").then((m) => m.useUsageStore.getState().load());
+        void useUsageStore.getState().load(Boolean(session));
       });
       authSubscription = listener.subscription;
     } catch (e) {
-      set({ error: e instanceof Error ? e.message : String(e) });
+      if (isCurrent()) {
+        set({ error: e instanceof Error ? e.message : String(e) });
+      }
     } finally {
       // Always flip `ready` — otherwise the onboarding account step spins forever.
-      set({ ready: true });
+      if (isCurrent()) set({ ready: true });
     }
   },
 

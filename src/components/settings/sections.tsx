@@ -153,7 +153,7 @@ export function ProvidersSection() {
   const refreshProviders = useAgentStore((s) => s.refreshProviders);
 
   useEffect(() => {
-    // Credentials can change outside the app (`pi auth login` in a terminal),
+    // Credentials can change outside the app (editing .env in a terminal),
     // so re-read them every time the section mounts.
     void refreshProviders();
   }, [refreshProviders]);
@@ -200,8 +200,6 @@ export function ProvidersSection() {
 
 export function PrivacySection() {
   const { t } = useTranslation();
-  const settings = useSettingsStore((s) => s.settings);
-  const update = useSettingsStore((s) => s.update);
   const reset = useSettingsStore((s) => s.reset);
   const resetOnboarding = useOnboardingStore((s) => s.reset);
 
@@ -211,19 +209,6 @@ export function PrivacySection() {
       title={t("settings.privacy")}
       description={t("settings.privacyHint")}
     >
-      <Row
-        label={t("settings.telemetry")}
-        hint={t("settings.telemetryHint")}
-        control={
-          <Switch
-            checked={settings.telemetryEnabled}
-            onCheckedChange={(checked) =>
-              void update({ telemetryEnabled: checked })
-            }
-          />
-        }
-      />
-      <Separator />
       <Row
         label={
           <span className="inline-flex items-center gap-1.5">
@@ -263,7 +248,9 @@ export function PrivacySection() {
 }
 
 export function CheckpointsSection() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  // Match ChatHistory/UsageSection: dates follow the app language, not the OS.
+  const dateLocale = i18n.language === "ru" ? "ru-RU" : "en-US";
   const checkpoints = useSettingsStore((s) => s.checkpoints);
   const refreshCheckpoints = useSettingsStore((s) => s.refreshCheckpoints);
   const restoreCheckpoint = useSettingsStore((s) => s.restoreCheckpoint);
@@ -292,7 +279,7 @@ export function CheckpointsSection() {
               <div className="checkpoint-item__meta">
                 <strong>{cp.label || cp.id}</strong>
                 <span>
-                  {new Date(cp.createdAt).toLocaleString()} ·{" "}
+                  {new Date(cp.createdAt).toLocaleString(dateLocale)} ·{" "}
                   {t("settings.filesCount", { count: cp.files.length })}
                 </span>
               </div>

@@ -129,10 +129,15 @@ function rollBucket(
 ): UsageBucket {
   const fresh = makeBucket(windowMs, prefix, ts);
   if (!b || b.key !== fresh.key) return fresh;
+  const endsAt = Number(b.endsAt);
+  const used = Number(b.used);
   return {
     key: b.key,
-    endsAt: typeof b.endsAt === "number" ? b.endsAt : fresh.endsAt,
-    used: Math.max(0, Number(b.used) || 0),
+    endsAt: Number.isFinite(endsAt) && endsAt > 0 ? endsAt : fresh.endsAt,
+    used:
+      Number.isFinite(used) && used > 0
+        ? Math.min(Number.MAX_SAFE_INTEGER, used)
+        : 0,
   };
 }
 
@@ -167,10 +172,10 @@ export function normalizeUsage(
     }
   }
 
-  const credits =
-    typeof r.credits === "number"
-      ? Math.max(0, r.credits)
-      : PLANS[plan].credits;
+  const rawCredits = Number(r.credits);
+  const credits = Number.isFinite(rawCredits)
+    ? Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, rawCredits))
+    : PLANS[plan].credits;
 
   const rawLimits = r.limits as Partial<UsageLimits> | undefined;
   const limits: UsageLimits | undefined =
@@ -290,7 +295,9 @@ export interface SpendOutcome {
  * and disagreed about the remainder — one dropped it, which under-counted.
  */
 export function applySpend(data: UsageStateData, costTokens: number): SpendOutcome {
-  const cost = Math.max(0, Math.floor(costTokens));
+  const cost = Number.isFinite(costTokens)
+    ? Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.floor(costTokens)))
+    : 0;
   const base = cloneUsage(data);
   if (cost <= 0) return { data: base, fromPlan: 0, fromCredits: 0, overshoot: 0 };
 

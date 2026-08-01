@@ -1,4 +1,5 @@
 import type { ModelProvider } from "./models";
+import type { UsagePlanId, UsageStateData } from "./usage";
 
 export type AgentMode = "plan" | "agent";
 
@@ -21,6 +22,8 @@ export interface BeideSettings {
   telemetryEnabled: boolean;
   defaultAgentMode: AgentMode;
   modelLabel: string;
+  /** Reopened on the next launch; null after the user closes the workspace. */
+  lastWorkspacePath: string | null;
 }
 
 export interface FileNode {
@@ -107,7 +110,8 @@ export interface AgentPromptPayload {
 
 export interface BeideApi {
   workspace: {
-    open: () => Promise<string | null>;
+    pickFolder: () => Promise<string | null>;
+    setRoot: (path: string) => Promise<string>;
     getRoot: () => Promise<string | null>;
     readDir: (path?: string) => Promise<FileNode[]>;
     readFile: (path: string) => Promise<string>;
@@ -126,10 +130,11 @@ export interface BeideApi {
     respondPermission: (id: string, allow: boolean, content?: string) => Promise<void>;
     getStatus: () => Promise<{ ready: boolean; streaming: boolean; mode: AgentMode; model?: string }>;
     getProviders: () => Promise<ProviderStatus[]>;
+    installProviderKey: (ciphertext: string) => Promise<{ ok: boolean; error?: string }>;
   };
   checkpoint: {
     list: () => Promise<CheckpointInfo[]>;
-    restore: (id: string) => Promise<void>;
+    restore: (id: string) => Promise<string[]>;
   };
   settings: {
     get: () => Promise<BeideSettings>;
@@ -146,29 +151,18 @@ export interface BeideApi {
   shell: {
     run: (command: string) => Promise<{ code: number; stdout: string; stderr: string }>;
   };
+  terminal: {
+    create: (cols: number, rows: number) => Promise<{ id: string }>;
+    write: (id: string, data: string) => Promise<{ ok: boolean }>;
+    resize: (id: string, cols: number, rows: number) => Promise<{ ok: boolean }>;
+    kill: (id: string) => Promise<{ ok: boolean }>;
+  };
   window: {
     minimize: () => Promise<void>;
     maximize: () => Promise<boolean>;
-    close: () => Promise<void>;
+    close: (discardUnsaved?: boolean) => Promise<void>;
     isMaximized: () => Promise<boolean>;
-  };
-  usage: {
-    get: () => Promise<{
-      plan: "free" | "pro";
-      h5: { key: string; endsAt: number; used: number };
-      week: { key: string; endsAt: number; used: number };
-      credits: number;
-    }>;
-    increment: (delta: {
-      prompts?: number;
-      tools?: number;
-      tokens?: number;
-    }) => Promise<{
-      plan: "free" | "pro";
-      h5: { key: string; endsAt: number; used: number };
-      week: { key: string; endsAt: number; used: number };
-      credits: number;
-    }>;
+    setDirty: (dirty: boolean) => Promise<void>;
   };
   on: (channel: string, listener: (...args: unknown[]) => void) => () => void;
 }

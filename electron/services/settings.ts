@@ -1,16 +1,17 @@
-import { app } from "electron";
-import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { watch, type FSWatcher } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
+import { DEFAULT_MODEL_ID } from "../../src/lib/models";
 import type { BeideSettings } from "../../src/lib/types";
 
 export const DEFAULT_SETTINGS: BeideSettings = {
   language: "ru",
-  theme: "light",
+  theme: "dark",
   permissionMode: "ask",
   telemetryEnabled: false,
   defaultAgentMode: "agent",
-  modelLabel: "minimaxai/minimax-m3",
+  modelLabel: DEFAULT_MODEL_ID,
+  lastWorkspacePath: null,
 };
 
 function sanitizeSettings(value: unknown): Partial<BeideSettings> {
@@ -33,6 +34,14 @@ function sanitizeSettings(value: unknown): Partial<BeideSettings> {
   if (typeof input.modelLabel === "string" && input.modelLabel.trim()) {
     out.modelLabel = input.modelLabel.trim().slice(0, 128);
   }
+  if (input.lastWorkspacePath === null) {
+    out.lastWorkspacePath = null;
+  } else if (
+    typeof input.lastWorkspacePath === "string" &&
+    input.lastWorkspacePath.trim()
+  ) {
+    out.lastWorkspacePath = input.lastWorkspacePath.trim().slice(0, 1024);
+  }
   return out;
 }
 
@@ -41,9 +50,10 @@ export class SettingsService {
   private readonly filePath: string;
   private watcher: FSWatcher | null = null;
   private mtime = 0;
+  private operationChain: Promise<void> = Promise.resolve();
 
-  constructor(filePath?: string) {
-    this.filePath = filePath ?? join(app.getPath("userData"), "settings.json");
+  constructor(filePath: string) {
+    this.filePath = filePath;
   }
 
   get path(): string {
@@ -58,7 +68,20 @@ export class SettingsService {
     }
   }
 
+  private enqueue<T>(operation: () => Promise<T>): Promise<T> {
+    const run = this.operationChain.then(operation, operation);
+    this.operationChain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
   async get(): Promise<BeideSettings> {
+    return this.enqueue(() => this.getImpl());
+  }
+
+  private async getImpl(): Promise<BeideSettings> {
     // The watcher below clears the cache whenever the file changes underneath
     // us, so a warm cache is always current. `get()` runs on every prompt —
     // re-reading the file each time was pure I/O for no benefit.
@@ -77,7 +100,11 @@ export class SettingsService {
   }
 
   async set(partial: Partial<BeideSettings>): Promise<BeideSettings> {
-    const current = await this.get();
+    return this.enqueue(() => this.setImpl(partial));
+  }
+
+  private async setImpl(partial: Partial<BeideSettings>): Promise<BeideSettings> {
+    const current = await this.getImpl();
     const valid = sanitizeSettings(partial);
     const next: BeideSettings = {
       ...current,
@@ -86,9 +113,15 @@ export class SettingsService {
     await mkdir(dirname(this.filePath), { recursive: true });
     // tmp+rename: a crash mid-write must not leave settings.json half-written
     // (a corrupt file silently resets every preference to defaults).
-    const tmp = `${this.filePath}.tmp_${process.pid}`;
-    await writeFile(tmp, JSON.stringify(next, null, 2), "utf-8");
-    await rename(tmp, this.filePath);
+    const tmp = `${this.filePath}.tmp_${process.pid}_${Date.now()}_${Math.random()
+      .toString(36)
+      .slice(2, 8)}`;
+    try {
+      await writeFile(tmp, JSON.stringify(next, null, 2), "utf-8");
+      await rename(tmp, this.filePath);
+    } finally {
+      await rm(tmp, { force: true }).catch(() => undefined);
+    }
     this.cache = next;
     await this.rememberMtime();
     this.startWatch();

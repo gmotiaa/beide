@@ -1,11 +1,17 @@
-import { useCallback, useEffect, useState, type CSSProperties } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useState,
+  type CSSProperties,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { ActivityBar, type ActivityId } from "./ActivityBar";
 import { StatusBar } from "./StatusBar";
 import { TitleBar } from "./TitleBar";
 import { FileTree } from "../sidebar/FileTree";
 import { SearchPanel } from "../sidebar/SearchPanel";
-import { EditorArea } from "../editor/EditorArea";
 import { ChatPanel } from "../chat/ChatPanel";
 import { DiffModal } from "../diff/DiffModal";
 import { SettingsView } from "../settings/SettingsView";
@@ -15,7 +21,14 @@ import { useWorkspaceStore } from "../../stores/workspace";
 import { useEditorStore } from "../../stores/editor";
 import { useAgentStore } from "../../stores/agent";
 import { useSettingsStore } from "../../stores/settings";
-import { onBeide } from "../../lib/ipc";
+import { useChatStore } from "../../stores/chat";
+import { getBeide, onBeide } from "../../lib/ipc";
+
+// Monaco dominates the renderer bundle (~8 of 11 MB) — split it off the
+// startup path; the shell paints immediately and the editor streams in.
+const EditorArea = lazy(() =>
+  import("../editor/EditorArea").then((m) => ({ default: m.EditorArea })),
+);
 
 const SIDEBAR_MIN = 180;
 const SIDEBAR_MAX = 480;
@@ -39,6 +52,7 @@ export function AppLayout() {
   const openFolder = useWorkspaceStore((s) => s.openFolder);
   const saveActive = useEditorStore((s) => s.saveActive);
   const reloadPath = useEditorStore((s) => s.reloadPath);
+  const hasDirtyTabs = useEditorStore((s) => s.tabs.some((tab) => tab.dirty));
   const agentInit = useAgentStore((s) => s.init);
   const agentDispose = useAgentStore((s) => s.dispose);
   const loadSettings = useSettingsStore((s) => s.load);
@@ -55,7 +69,20 @@ export function AppLayout() {
       void refreshTree();
       const payload = args[0];
       if (payload && typeof payload === "object") {
-        const path = (payload as { path?: string }).path;
+        const change = payload as {
+          path?: string;
+          paths?: string[];
+          restored?: string;
+        };
+        if (typeof change.restored === "string" && Array.isArray(change.paths)) {
+          for (const restoredPath of change.paths) {
+            if (typeof restoredPath === "string") {
+              void reloadPath(restoredPath, true);
+            }
+          }
+          return;
+        }
+        const path = change.path;
         if (typeof path === "string") {
           const tab = useEditorStore.getState().tabs.find((x) => x.path === path);
           if (tab && !tab.dirty) void reloadPath(path);
@@ -65,19 +92,54 @@ export function AppLayout() {
   }, [refreshTree, reloadPath]);
 
   useEffect(() => {
+    void getBeide()?.window.setDirty(hasDirtyTabs);
+  }, [hasDirtyTabs]);
+
+  useEffect(() => {
+    let closing = false;
+    return onBeide("window:close-requested", (...args: unknown[]) => {
+      if (closing) return;
+      const payload = args[0];
+      const dirty =
+        payload && typeof payload === "object" && "dirty" in payload
+          ? Boolean((payload as { dirty?: unknown }).dirty)
+          : useEditorStore.getState().tabs.some((tab) => tab.dirty);
+      if (dirty && !window.confirm(t("editor.closeWindowUnsavedConfirm"))) return;
+
+      closing = true;
+      void (async () => {
+        try {
+          // Persist the latest assistant/tool deltas while the workspace and
+          // renderer still exist, then allow exactly this close attempt.
+          await useChatStore.getState().flushBeforeWorkspaceChange();
+          await getBeide()?.window.close(true);
+        } catch {
+          closing = false;
+        }
+      })();
+    });
+  }, [t]);
+
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.ctrlKey || e.metaKey;
-      if (mod && e.key.toLowerCase() === "s") {
+      if (!mod) return;
+      // `e.key` follows the OS layout: on ЙЦУКЕН Ctrl+S arrives as "ы" and
+      // none of the shortcuts fire. Match the physical key (`e.code`) as well
+      // so they work on Cyrillic layouts too.
+      const is = (letter: string, code: string) =>
+        e.key.toLowerCase() === letter || e.code === code;
+      if (is("s", "KeyS")) {
         e.preventDefault();
         void saveActive();
       }
       // TitleBar's menu and the editor welcome cards advertise Ctrl+O; the
       // handler has to actually exist for that promise to hold.
-      if (mod && e.key.toLowerCase() === "o") {
+      if (is("o", "KeyO")) {
         e.preventDefault();
         void openFolder();
       }
-      if (mod && e.key.toLowerCase() === "l") {
+      if (is("l", "KeyL")) {
         e.preventDefault();
         setChatOpen(true);
         requestAnimationFrame(() => {
@@ -85,11 +147,11 @@ export function AppLayout() {
           el?.focus();
         });
       }
-      if (mod && e.key.toLowerCase() === "b") {
+      if (is("b", "KeyB")) {
         e.preventDefault();
         setSidebarOpen((v) => !v);
       }
-      if (mod && e.key === "`") {
+      if (e.key === "`" || e.code === "Backquote") {
         e.preventDefault();
         setTermOpen((v) => !v);
       }
@@ -166,7 +228,9 @@ export function AppLayout() {
             {showSettings ? (
               <SettingsView />
             ) : (
-              <EditorArea />
+              <Suspense fallback={<div className="app-boot" />}>
+                <EditorArea />
+              </Suspense>
             )}
 
             {chatOpen && (

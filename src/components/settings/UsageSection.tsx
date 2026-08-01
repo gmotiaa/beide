@@ -148,9 +148,9 @@ export function UsageSection() {
   const limits = useMemo(() => effectiveLimits(data), [data]);
   const gate = useMemo(() => canSpend(data, 48), [data]);
 
-  // Self-service plan/credits only exist where the server allows it (demo
-  // projects) or where the counters are local anyway.
-  const canSelfServe = source !== "supabase" || data.demo === true;
+  // Self-service plan/credits only exist where the server allows it (the
+  // demo_billing flag) — counters are Supabase-only now.
+  const canSelfServe = data.demo === true;
 
   const gateEndsAt = gate.endsAt ?? data.h5.endsAt;
   const gateLeft = durationParts(msUntil(gateEndsAt, now));
@@ -167,11 +167,8 @@ export function UsageSection() {
       description={t("settings.usageHint")}
       action={
         <div className="flex items-center gap-2">
-          <Badge
-            variant={source === "supabase" ? "default" : "outline"}
-            className="h-6 px-2 font-normal"
-          >
-            {source === "supabase" ? "Supabase" : t("settings.localAccount")}
+          <Badge variant="default" className="h-6 px-2 font-normal">
+            Supabase
           </Badge>
           <Button
             type="button"
@@ -214,19 +211,6 @@ export function UsageSection() {
             <p className="usage-banner__hint">
               {t("settings.limitReachedHint")}{" "}
               {t("settings.resetIn", { time: gateIn })}
-            </p>
-          </div>
-        </div>
-      ) : null}
-
-      {source !== "supabase" ? (
-        <div className="usage-banner usage-banner--info">
-          <div className="min-w-0 flex-1">
-            <div className="font-medium">
-              {t("settings.cloudBillingHintTitle")}
-            </div>
-            <p className="usage-banner__hint">
-              {t("settings.cloudBillingHintBody")}
             </p>
           </div>
         </div>

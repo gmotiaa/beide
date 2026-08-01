@@ -66,7 +66,7 @@ function SessionRow({
       type="button"
       onClick={onSelect}
       className={cn(
-        "flex w-full flex-col gap-1 rounded-lg border border-transparent px-3 py-2.5 text-left transition-colors",
+        "chat-session-row flex w-full flex-col gap-1 rounded-lg border border-transparent px-3 py-2.5 text-left transition-colors",
         "hover:bg-accent hover:text-accent-foreground",
         active && "border-border bg-accent/80",
       )}

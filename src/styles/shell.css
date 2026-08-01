@@ -132,7 +132,7 @@ pre,
 
 .title-bar__name {
   font-size: 13px;
-  font-weight: 650;
+  font-weight: 600;
   letter-spacing: -0.03em;
   color: var(--text);
 }
@@ -194,6 +194,11 @@ pre,
   background: var(--panel-hover);
   border-color: var(--border-strong);
   color: var(--text);
+}
+
+.title-bar__path-chip:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 .title-bar__path {
@@ -291,9 +296,14 @@ pre,
   background: var(--panel-active, var(--panel-hover));
 }
 
+.title-bar__win-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
 .title-bar__win-btn--close:hover {
-  background: #e81123;
-  color: #fff;
+  background: var(--danger);
+  color: var(--danger-contrast);
 }
 
 html[data-theme="dark"] .title-bar,
@@ -331,7 +341,7 @@ html.dark .title-bar {
   container-type: inline-size;
   max-width: 1040px;
   margin: 0 auto;
-  padding: 26px 24px 48px;
+  padding: 24px 24px 48px;
 }
 
 .settings-view__hero {
@@ -343,7 +353,7 @@ html.dark .title-bar {
 
 .settings-view__logo {
   flex-shrink: 0;
-  border-radius: 11px;
+  border-radius: var(--radius-md);
   box-shadow:
     0 1px 0 color-mix(in srgb, var(--border) 80%, transparent),
     0 8px 24px color-mix(in srgb, var(--accent) 18%, transparent);
@@ -382,7 +392,7 @@ html.dark .title-bar {
   flex-direction: column;
   gap: 2px;
   padding: 6px;
-  border-radius: 14px;
+  border-radius: var(--radius-md);
   border: 1px solid var(--border);
   background: color-mix(in srgb, var(--bg) 55%, var(--panel));
 }
@@ -409,6 +419,11 @@ html.dark .title-bar {
 .settings-nav__item:hover {
   background: var(--panel-hover);
   color: var(--text);
+}
+
+.settings-nav__item:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 .settings-nav__item--active {
@@ -451,7 +466,7 @@ html.dark .title-bar {
 
 /* ── Panels ── */
 .settings-panel {
-  border-radius: 16px;
+  border-radius: var(--radius-lg);
 }
 
 .settings-panel--usage {
@@ -568,7 +583,7 @@ html.dark .title-bar {
   gap: 3px;
   text-align: left;
   padding: 10px 12px;
-  border-radius: 11px;
+  border-radius: var(--radius-md);
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--text-muted);
@@ -582,6 +597,11 @@ html.dark .title-bar {
 .settings-choice:hover:not(.settings-choice--disabled) {
   background: var(--panel-hover);
   color: var(--text);
+}
+
+.settings-choice:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 .settings-choice--active {
@@ -625,8 +645,8 @@ html.dark .title-bar {
   display: flex;
   align-items: flex-start;
   gap: 10px;
-  padding: 11px 13px;
-  border-radius: 13px;
+  padding: 12px;
+  border-radius: var(--radius-md);
   border: 1px solid var(--border);
   background: var(--panel);
   font-size: 13px;
@@ -677,8 +697,8 @@ html.dark .title-bar {
   display: flex;
   align-items: center;
   gap: 11px;
-  padding: 11px 13px;
-  border-radius: 13px;
+  padding: 12px;
+  border-radius: var(--radius-md);
   border: 1px solid var(--border);
   background: color-mix(in srgb, var(--bg) 70%, var(--panel));
 }
@@ -696,7 +716,7 @@ html.dark .title-bar {
   gap: 7px;
   min-height: 128px;
   padding: 13px 15px;
-  border-radius: 14px;
+  border-radius: var(--radius-md);
   border: 1px solid var(--border);
   background: color-mix(in srgb, var(--bg) 55%, var(--panel));
 }
@@ -713,7 +733,7 @@ html.dark .title-bar {
   align-items: baseline;
   gap: 4px;
   font-size: 24px;
-  font-weight: 650;
+  font-weight: 600;
   line-height: 1.05;
   letter-spacing: -0.035em;
   color: var(--text);
@@ -791,8 +811,8 @@ html.dark .title-bar {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 12px 14px;
-  border-radius: 13px;
+  padding: 12px;
+  border-radius: var(--radius-md);
   border: 1px solid var(--border);
   background: color-mix(in srgb, var(--bg) 55%, var(--panel));
 }
@@ -842,7 +862,7 @@ html.dark .title-bar {
   justify-content: space-between;
   gap: 12px;
   padding: 10px 12px;
-  border-radius: 11px;
+  border-radius: var(--radius-md);
   border: 1px solid var(--border);
   background: var(--bg);
 }
@@ -860,7 +880,7 @@ html.dark .title-bar {
   justify-content: space-between;
   gap: 12px;
   padding: 10px 12px;
-  border-radius: 11px;
+  border-radius: var(--radius-md);
   border: 1px solid var(--border);
   background: var(--bg);
 }
@@ -1097,6 +1117,11 @@ html.dark .title-bar {
   box-shadow: none;
 }
 
+.tab:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
 .tab__dirty {
   width: 6px;
   height: 6px;
@@ -1213,9 +1238,28 @@ html.dark .title-bar {
 .terminal-panel__title {
   font-size: 11px;
   letter-spacing: 0.04em;
-  font-weight: 650;
+  font-weight: 600;
   text-transform: uppercase;
   color: var(--text-muted);
+}
+
+.terminal-panel__title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.terminal-panel__header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.terminal-panel__cwd-chip {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .terminal-panel__body {
@@ -1350,16 +1394,16 @@ html.dark .title-bar {
   height: 7px;
   border-radius: 999px;
   flex-shrink: 0;
-  background: var(--text-faint, #a1a1aa);
+  background: var(--text-faint);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--panel) 80%, transparent);
 }
 
 .chat-panel__status-dot.is-ready {
-  background: var(--success, #22c55e);
+  background: var(--success);
 }
 
 .chat-panel__status-dot.is-live {
-  background: var(--accent, #3b82f6);
+  background: var(--accent);
   animation: beide-pulse 1.4s ease-in-out infinite;
 }
 
@@ -1377,7 +1421,7 @@ html.dark .title-bar {
 
 .chat-panel__title {
   font-size: 14px;
-  font-weight: 650;
+  font-weight: 600;
   letter-spacing: -0.02em;
   text-transform: none;
   /* The three per-theme overrides that used to follow all resolved to the same
@@ -1442,21 +1486,25 @@ html.dark .title-bar {
   background: var(--an-background, var(--panel));
 }
 
+/* The transcript scrolls inside MessageList's own container
+   (.chat-panel__messages): all of its follow-the-stream logic reads and sets
+   that element's scrollTop. When this wrapper was the scroller instead, the
+   inner container was forced to content height and every autoscroll feature
+   silently did nothing. Keep min-height: 0 at every level of this chain. */
 .chat-panel__scroll {
   flex: 1 1 auto;
   min-height: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
-  scroll-behavior: smooth;
 }
 
 .chat-panel__messages {
-  flex: 1 0 auto;
-  min-height: min-content;
+  flex: 1 1 auto;
+  min-height: 0;
   width: 100%;
   padding-bottom: 12px;
+  user-select: text;
 }
 
 /* Assistant markdown: keep readable line breaks */
@@ -1476,7 +1524,12 @@ html.dark .title-bar {
   font-size: 0.9em;
   padding: 0.1em 0.35em;
   border-radius: 4px;
-  background: var(--code-bg, #f4f4f7);
+  background: var(--code-bg);
+}
+
+.chat-session-row:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 .chat-panel__empty {
@@ -1610,7 +1663,7 @@ html.dark .title-bar {
   color: var(--accent);
   font-size: 10px;
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   line-height: 1;
   box-shadow: none;
@@ -1619,7 +1672,7 @@ html.dark .title-bar {
 .chat-panel__footer-hint {
   font-size: 10px;
   font-weight: 500;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--text-faint);
 }
@@ -1668,6 +1721,11 @@ html.dark .title-bar {
   --diff-add-bg: var(--success-muted);
   --diff-del-bg: var(--danger-muted);
   --diff-hunk: var(--text-muted);
+}
+
+.diff-view,
+.diff-dialog__code {
+  user-select: text;
 }
 
 .diff-view__line--add {

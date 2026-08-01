@@ -1,10 +1,12 @@
 import { memo } from "react";
+import { useTranslation } from "react-i18next";
 import { TextShimmer } from "../text-shimmer";
 import type { TimelineStep, StepState } from "../types/timeline";
 import { useToolComplete } from "../hooks/use-tool-complete";
 import {
   mapToolInvocationToStep,
   mapToolStateToStepState,
+  partToInvocationState,
 } from "../utils/tool-adapters";
 import { ToolApprovalFooter, type ToolApproval } from "./tool-approval-footer";
 
@@ -22,6 +24,8 @@ export type BashToolTerminalCardProps = {
   state: StepState;
   onComplete: () => void;
   approval?: ToolApproval;
+  isError?: boolean;
+  errorText?: string;
 };
 
 export function BashToolTerminalCard({
@@ -29,7 +33,10 @@ export function BashToolTerminalCard({
   state,
   onComplete,
   approval,
+  isError = false,
+  errorText,
 }: BashToolTerminalCardProps) {
+  const { t } = useTranslation();
   useToolComplete(state === "animating", step.duration, onComplete);
   const isPending = state === "animating";
   const rawCmd = (step.bashCommand ?? step.toolDetail ?? "").trim();
@@ -50,11 +57,15 @@ export function BashToolTerminalCard({
               duration={1.2}
               className="inline-flex items-center text-xs leading-none h-full m-0 truncate"
             >
-              Running command: {summary}
+              {t("agentElements.bashRunning", { summary })}
             </TextShimmer>
+          ) : isError ? (
+            <span className="text-xs text-destructive truncate">
+              {t("agentElements.bashFailed", { summary })}
+            </span>
           ) : (
             <span className="text-xs text-muted-foreground truncate">
-              Ran command: {summary}
+              {t("agentElements.bashDone", { summary })}
             </span>
           )}
         </div>
@@ -93,6 +104,11 @@ export function BashToolTerminalCard({
             {step.bashOutput}
           </div>
         )}
+        {!isPending && isError && !step.bashOutput && errorText && (
+          <div className="mt-1 text-destructive whitespace-pre-line max-h-[80px] overflow-hidden">
+            {errorText}
+          </div>
+        )}
       </div>
       {approval && <ToolApprovalFooter isPending={isPending} {...approval} />}
     </div>
@@ -107,24 +123,14 @@ export const BashTool = memo(function BashTool({ part }: BashToolProps) {
   const approval = (part.input?.approval ?? part.args?.approval) as
     | ToolApproval
     | undefined;
+  const invocationState = partToInvocationState(part.state);
   const step = mapToolInvocationToStep(part.toolCallId ?? part.id ?? "bash", {
     toolName: "Bash",
     args: part.input ?? part.args ?? {},
-    state:
-      part.state === "output-available"
-        ? "result"
-        : part.state === "input-streaming"
-          ? "partial-call"
-          : "call",
+    state: invocationState,
     result: part.output ?? part.result,
   });
-  const stepState = mapToolStateToStepState(
-    part.state === "output-available"
-      ? "result"
-      : part.state === "input-streaming"
-        ? "partial-call"
-        : "call",
-  );
+  const stepState = mapToolStateToStepState(invocationState);
   const noop = () => {};
 
   return (
@@ -133,6 +139,8 @@ export const BashTool = memo(function BashTool({ part }: BashToolProps) {
       state={stepState}
       onComplete={noop}
       approval={approval}
+      isError={part.state === "output-error"}
+      errorText={typeof part.errorText === "string" ? part.errorText : undefined}
     />
   );
 });

@@ -1,4 +1,5 @@
-import { BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow, ipcMain } from "electron";
+import { join } from "node:path";
 import type {
   AgentPromptPayload,
   BeideSettings,
@@ -22,7 +23,7 @@ import {
 import { PermissionGateway } from "./services/permissions";
 import { SessionService } from "./services/sessions";
 import { SettingsService } from "./services/settings";
-import { UsageService } from "./services/usage";
+import { TerminalService } from "./services/terminal";
 import { WorkspaceService } from "./services/workspace";
 
 export interface BeideServices {
@@ -32,23 +33,18 @@ export interface BeideServices {
   checkpoints: CheckpointService;
   sessions: SessionService;
   agent: AgentService;
-  usage: UsageService;
+  terminal: TerminalService;
 }
 
 export function createServices(): BeideServices {
   const workspace = new WorkspaceService();
-  const settings = new SettingsService();
+  const userData = app.getPath("userData");
+  const settings = new SettingsService(join(userData, "settings.json"));
   const permissions = new PermissionGateway();
   const checkpoints = new CheckpointService();
   const sessions = new SessionService();
-  const usage = new UsageService();
-  const agent = new AgentService(
-    settings,
-    permissions,
-    checkpoints,
-    sessions,
-    usage,
-  );
+  const agent = new AgentService(settings, permissions, checkpoints, sessions);
+  const terminal = new TerminalService();
   return {
     workspace,
     settings,
@@ -56,11 +52,32 @@ export function createServices(): BeideServices {
     checkpoints,
     sessions,
     agent,
-    usage,
+    terminal,
   };
 }
 
 let registered = false;
+const dirtyWindows = new WeakSet<BrowserWindow>();
+const forceCloseWindows = new WeakSet<BrowserWindow>();
+const guardedWindows = new WeakSet<BrowserWindow>();
+
+function attachWindowCloseGuard(win: BrowserWindow | null): void {
+  if (!win || guardedWindows.has(win)) return;
+  guardedWindows.add(win);
+  win.on("close", (event) => {
+    if (forceCloseWindows.has(win)) {
+      forceCloseWindows.delete(win);
+      return;
+    }
+    if (win.webContents.isDestroyed()) return;
+    event.preventDefault();
+    if (!win.isDestroyed()) {
+      win.webContents.send("window:close-requested", {
+        dirty: dirtyWindows.has(win),
+      });
+    }
+  });
+}
 
 /**
  * Handlers are registered once but the services behind them can be rebuilt
@@ -107,6 +124,8 @@ function bindWindowControls(getMainWindow: () => BrowserWindow | null): void {
   const windowFromEvent = (event: Electron.IpcMainInvokeEvent) =>
     BrowserWindow.fromWebContents(event.sender) ?? getMainWindow();
 
+  attachWindowCloseGuard(getMainWindow());
+
   rehandle("window:minimize", (event) => {
     windowFromEvent(event)?.minimize();
     return true;
@@ -118,12 +137,26 @@ function bindWindowControls(getMainWindow: () => BrowserWindow | null): void {
     else w.maximize();
     return w.isMaximized();
   });
-  rehandle("window:close", (event) => {
-    windowFromEvent(event)?.close();
+  rehandle("window:close", (event, discardUnsaved?: unknown) => {
+    const win = windowFromEvent(event);
+    if (!win) return false;
+    const force =
+      discardUnsaved === undefined
+        ? false
+        : asBoolean(discardUnsaved, "discardUnsaved");
+    if (force) forceCloseWindows.add(win);
+    win.close();
     return true;
   });
   rehandle("window:isMaximized", (event) => {
     return windowFromEvent(event)?.isMaximized() ?? false;
+  });
+  rehandle("window:setDirty", (event, dirty: unknown) => {
+    const win = windowFromEvent(event);
+    if (!win) return false;
+    if (asBoolean(dirty, "dirty")) dirtyWindows.add(win);
+    else dirtyWindows.delete(win);
+    return true;
   });
 }
 
@@ -207,6 +240,7 @@ export function registerIpc(
     services.workspace.setMainWindow(win);
     services.agent.setMainWindow(win);
     services.permissions.setMainWindow(win);
+    services.terminal.setMainWindow(win);
   };
 
   if (registered) {
@@ -216,11 +250,24 @@ export function registerIpc(
   registered = true;
 
   // ── Workspace ────────────────────────────────────────────
-  rehandle("workspace:open", async () => {
-    const root = await svc().workspace.openFolder();
-    if (root) {
+  rehandle("workspace:pickFolder", async () => svc().workspace.pickFolder());
+
+  rehandle("workspace:setRoot", async (_e, path: unknown) => {
+    const root = await svc().workspace.setRoot(
+      asString(path, "path", LIMITS.path),
+    );
+    try {
       await svc().agent.onWorkspaceChanged(root);
+    } catch (error) {
+      // The file workspace is already valid and active. Keep renderer/main in
+      // sync even if optional AI initialization fails; provider errors surface
+      // again through agent status when the user opens chat.
+      console.error("[beide] agent failed to bind the new workspace", error);
     }
+    // Remembered so the next launch reopens where the user left off.
+    void svc().settings.set({ lastWorkspacePath: root });
+    // Shells from the previous workspace are cwd'd into it — close them.
+    svc().terminal.onWorkspaceChanged(root);
     return root;
   });
 
@@ -317,14 +364,23 @@ export function registerIpc(
 
   rehandle("agent:getProviders", async () => svc().agent.getProviders());
 
+  rehandle("agent:installProviderKey", async (_e, ciphertext: unknown) => {
+    // base64(iv || key || tag) — provider keys are short; 8 KiB is generous.
+    const blob = asString(ciphertext, "ciphertext", 8192);
+    return svc().agent.installEncryptedProviderKey(blob);
+  });
+
   // ── Checkpoints ──────────────────────────────────────────
   rehandle("checkpoint:list", async () => svc().checkpoints.list());
 
   rehandle("checkpoint:restore", async (_e, id: unknown) => {
-    await svc().checkpoints.restore(asString(id, "id", 128));
+    const checkpointId = asString(id, "id", 128);
+    const paths = await svc().checkpoints.restore(checkpointId);
     getMainWindow()?.webContents.send("workspace:changed", {
-      restored: asString(id, "id", 128),
+      restored: checkpointId,
+      paths,
     });
+    return paths;
   });
 
   // ── Settings ─────────────────────────────────────────────
@@ -344,16 +400,22 @@ export function registerIpc(
 
   // The session main is currently appending to. The renderer holds the
   // transcript in memory only, so after a reload this is the one thing that
-  // says which conversation was open.
-  rehandle("session:active", async () => svc().sessions.getActiveId());
+  // says which conversation was open. Settled: waits for the persisted id
+  // restore after a full app restart.
+  rehandle("session:active", async () => svc().sessions.getActiveIdSettled());
 
-  rehandle("session:load", async (_e, id: unknown) =>
-    svc().sessions.load(asString(id, "id", 128)),
-  );
+  rehandle("session:load", async (_e, id: unknown) => {
+    const sid = asString(id, "id", 128);
+    const messages = await svc().sessions.load(sid);
+    await svc().agent.onSessionChanged(sid, messages);
+    return messages;
+  });
 
   rehandle("session:new", async () => {
     const s = await svc().settings.get();
-    return svc().sessions.create(s.defaultAgentMode);
+    const session = await svc().sessions.create(s.defaultAgentMode);
+    await svc().agent.onSessionChanged(session.id, []);
+    return session;
   });
 
   rehandle("session:save", async (_e, id: unknown, messages: unknown) => {
@@ -364,7 +426,10 @@ export function registerIpc(
   });
 
   rehandle("session:delete", async (_e, id: unknown) => {
-    await svc().sessions.delete(asString(id, "id", 128));
+    const sid = asString(id, "id", 128);
+    const wasActive = svc().sessions.getActiveId() === sid;
+    await svc().sessions.delete(sid);
+    if (wasActive) await svc().agent.onSessionChanged(null, []);
     return { ok: true };
   });
 
@@ -384,22 +449,29 @@ export function registerIpc(
     return runShellCommand(cmd, svc().workspace.getRoot(), 30_000);
   });
 
-  // ── Usage limits ─────────────────────────────────────────
-  rehandle("usage:get", async () => svc().usage.get());
-  rehandle("usage:increment", async (_e, delta: unknown) => {
-    const d = (delta && typeof delta === "object" ? delta : {}) as {
-      prompts?: number;
-      tools?: number;
-      tokens?: number;
-    };
-    // NaN/Infinity would poison the persisted counters and zero out the quota.
-    const count = (v: unknown): number | undefined =>
-      typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : undefined;
-    return svc().usage.increment({
-      prompts: count(d.prompts),
-      tools: count(d.tools),
-      tokens: count(d.tokens),
-    });
+  // Usage limits live in Supabase (get_billing / spend_tokens RPCs, renderer
+  // side) — there is no local counter backend anymore.
+
+  // ── Terminal (PTY) ───────────────────────────────────────
+  rehandle("terminal:create", async (_e, cols: unknown, rows: unknown) => {
+    const root = svc().workspace.getRoot();
+    if (!root) throw new IpcError("No workspace open", "NO_WORKSPACE");
+    return svc().terminal.create(root, Number(cols), Number(rows));
+  });
+
+  rehandle("terminal:write", async (_e, id: unknown, data: unknown) => {
+    svc().terminal.write(asString(id, "id", 64), asString(data, "data", 8192));
+    return { ok: true };
+  });
+
+  rehandle("terminal:resize", async (_e, id: unknown, cols: unknown, rows: unknown) => {
+    svc().terminal.resize(asString(id, "id", 64), Number(cols), Number(rows));
+    return { ok: true };
+  });
+
+  rehandle("terminal:kill", async (_e, id: unknown) => {
+    svc().terminal.kill(asString(id, "id", 64));
+    return { ok: true };
   });
 
   // Bind window refs
@@ -411,5 +483,6 @@ export function disposeServices(services: BeideServices): void {
   void services.agent.dispose();
   services.workspace.dispose();
   services.settings.dispose();
+  services.terminal.dispose();
   services.permissions.cancelAll("app shutdown");
 }

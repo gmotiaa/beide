@@ -83,7 +83,12 @@ export function TabBar() {
                 size="icon-sm"
                 aria-label={t("editor.closeTab")}
                 className="tab__close"
-                onClick={() => requestClose(tab.path, tab.name, tab.dirty)}
+                onClick={(e) => {
+                  // The click bubbles to the tab div, whose onClick would
+                  // re-activate the path this handler just closed.
+                  e.stopPropagation();
+                  requestClose(tab.path, tab.name, tab.dirty);
+                }}
               >
                 <IconX className="size-3.5" stroke={2} />
               </Button>

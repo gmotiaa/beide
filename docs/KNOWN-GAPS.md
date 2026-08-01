@@ -3,35 +3,26 @@
 Deliberate holes, half-wired modules and things that will bite. Update this
 file when you close one.
 
-## Workspace is not remembered between launches
+## Workspace restore caveats
 
-Main keeps the workspace root in memory only. On startup there is no folder, so
-`session:*` and `checkpoint:*` throw `No workspace open` until the user picks
-one through the native dialog. Consequences:
+The last workspace is remembered (`settings.json` `lastWorkspacePath`, plus a
+cloud copy in `user_settings.last_workspace_path`) and reopened on boot;
+the active chat is restored from `<workspace>/.beide/active-session.json`.
+Remaining holes:
 
-* `restoreActiveSession()` recovers a transcript after a **renderer** reload or
-  crash, but not after a full app restart — `SessionService.setWorkspace()`
-  clears `activeId`.
-* There is no CLI/env way to open a folder (handy for debugging — see
-  [DEVELOPMENT.md](DEVELOPMENT.md#driving-the-running-app-cdp)).
-
-`src/lib/supabase-settings.ts` already models `last_workspace_path` but is not
-imported anywhere. Closing this gap means: persist the root (locally, and
-optionally in Supabase), reopen it on boot, then restore the active session.
+* There is still no CLI/env way to open an arbitrary folder (handy for
+  debugging — see [DEVELOPMENT.md](DEVELOPMENT.md#driving-the-running-app-cdp)).
+* A moved/renamed workspace silently falls back to the empty state.
 
 ## Unwired modules
 
-| Module | State |
-| --- | --- |
-| `src/lib/supabase-settings.ts` | cloud settings read/write, no caller |
-| `electron/services/supabase-admin.ts` | service-role helpers, no IPC handler |
-| `src/components/agent-elements/tools/subagent-tool.tsx` | no `Task`/subagent renderer is registered |
-
-Either wire them or delete them — do not let the list grow.
+None currently. `supabase-settings.ts` is wired into the workspace restore;
+`supabase-admin.ts` and the subagent tool renderer were deleted. Do not let a
+new list accumulate — wire or delete.
 
 ## Testing
 
-No test framework. `npm test` runs a single hand-written harness over five
+No test framework. `npm test` runs a single hand-written harness over eleven
 backend invariants (`electron/services/verification.test.ts`); the renderer
 stores, the IPC layer end-to-end and every React component are uncovered. The
 chat store is the highest-risk uncovered code.
@@ -44,15 +35,19 @@ PTY, no interactive programs, no ANSI-heavy TUIs. A real terminal needs
 
 ## Packaging
 
-There is no `electron-builder` (or Forge) configuration — `npm run build` only
-produces `out/`. Icons exist in `build/` and `public/` for when packaging is
-added. No auto-update, no code signing.
+`electron-builder.yml` produces installer and portable Windows artifacts.
+Auto-update is wired (electron-updater, generic feed in `publish.url`) but the
+feed URL is a placeholder — until real hosting serves `latest.yml` + the
+installers, the check fails silently on every launch. Builds are still
+unsigned: updates work, but Windows shows the unknown-publisher prompt; fixing
+that needs a real certificate (`win.certificateFile`).
 
 ## Bundle size
 
-The renderer chunk is ~11 MB, dominated by Monaco plus streamdown's syntax
-grammars. No manual chunking or lazy loading is configured; the build prints
-size warnings and that is expected today.
+Monaco (~6.4 MB) is a lazy chunk behind `React.lazy(EditorArea)`; syntax
+grammars load on demand. The eager entry chunk is ~4.6 MB — further trimming
+means lazy-loading the chat markdown renderer, which has not been worth the
+mid-stream flicker risk so far.
 
 ## Localisation
 
@@ -69,6 +64,17 @@ Russian warnings.
 
 ## Accounts and usage
 
-Supabase auth is optional and the app works fully signed out. Usage counters
-(`%APPDATA%/beide/usage.json`) are local and trivially editable — they are a UI
-affordance, not enforcement.
+Supabase auth is mandatory: `App.tsx` blocks the IDE behind `AuthGate` until a
+session exists. Usage counters live only in Supabase (`get_billing` /
+`spend_tokens` RPCs, atomic and server-gated); the old local
+`%APPDATA%/beide/usage.json` backend was removed. The pre-check in
+`src/lib/usage.ts` is a client-side convenience — the server ledger is the
+enforcement.
+
+The model-provider key is delivered from Supabase after sign-in
+(`get_encrypted_model_api_key()` → `agent:installProviderKey` → AES-256-GCM
+decrypt in main, memory only). Honest caveat: the decryption key ships inside
+the app (`electron/services/provider-key.ts`), so this is defence in depth
+against casual extraction, not true secrecy — that would need a server-side
+proxy for all model traffic. `BEIDE_ECHOGATE_API_KEY` in `.env` remains a dev
+override. Publish/rotate the cloud key with `npm run supabase:secrets`.

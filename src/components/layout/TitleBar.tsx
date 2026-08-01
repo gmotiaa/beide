@@ -46,6 +46,7 @@ import { useAgentStore } from "../../stores/agent";
 import { useAuthStore } from "../../stores/auth";
 import { useOnboardingStore } from "../../stores/onboarding";
 import { getBeide } from "../../lib/ipc";
+import { findModel } from "../../lib/models";
 import { cn } from "../../lib/utils";
 
 export function TitleBar() {
@@ -98,15 +99,38 @@ export function TitleBar() {
     });
   }, [runWindow]);
 
+  // Native maximize paths (double-click on the drag region, Win+Up, aero
+  // snap) never go through runWindow, so the icon/aria drifted until the
+  // button was clicked. Every one of them resizes the window — re-query then.
+  useEffect(() => {
+    let timer: number | null = null;
+    const onResize = () => {
+      if (timer) window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        timer = null;
+        void runWindow("isMaximized").then((v) => {
+          if (typeof v === "boolean") setMaximized(v);
+        });
+      }, 120);
+    };
+    window.addEventListener("resize", onResize);
+    return () => {
+      if (timer) window.clearTimeout(timer);
+      window.removeEventListener("resize", onResize);
+    };
+  }, [runWindow]);
+
   const folder = rootPath
     ? rootPath.replace(/\\/g, "/").split("/").filter(Boolean).slice(-2).join(" / ")
     : null;
 
-  const modelShort = model
-    ? model.includes("/")
-      ? model.split("/").pop()
-      : model
-    : null;
+  // Same display name as the picker — the raw id read like a debug artifact.
+  const modelEntry = model ? findModel(model) : undefined;
+  const modelShort = modelEntry
+    ? `${modelEntry.name} ${modelEntry.version}`
+    : model
+      ? model.replace(/^.*\//, "")
+      : null;
 
   return (
     <TooltipProvider delay={200}>
@@ -311,7 +335,7 @@ export function TitleBar() {
                 void runWindow("minimize");
               }}
             >
-              <IconMinus className="size-3.5" stroke={2} />
+              <IconMinus className="size-3.5" stroke={1.75} />
             </button>
             <button
               type="button"
@@ -337,7 +361,7 @@ export function TitleBar() {
                 void runWindow("close");
               }}
             >
-              <IconX className="size-3.5" stroke={2} />
+              <IconX className="size-3.5" stroke={1.75} />
             </button>
           </div>
         </div>

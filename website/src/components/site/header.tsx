@@ -1,5 +1,4 @@
 import * as React from "react";
-import { Link, NavLink, useLocation } from "react-router-dom";
 import { Download, Github, Menu } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -19,7 +18,7 @@ import { cn } from "@/lib/utils";
 export function Header() {
   const [scrolled, setScrolled] = React.useState(false);
   const [open, setOpen] = React.useState(false);
-  const location = useLocation();
+  const pathname = window.location.pathname.replace(/\/+$/, "") || "/";
 
   React.useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 8);
@@ -27,8 +26,6 @@ export function Header() {
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
-
-  React.useEffect(() => setOpen(false), [location.pathname]);
 
   return (
     <header
@@ -40,26 +37,25 @@ export function Header() {
       )}
     >
       <Container className="flex h-16 items-center justify-between gap-6">
-        <Link to="/" aria-label="beide — на главную">
+        <a href="/" aria-label="beide — на главную">
           <Logo />
-        </Link>
+        </a>
 
         <nav className="hidden items-center gap-1 md:flex">
           {NAV.map((item) => (
-            <NavLink
+            <a
               key={item.to}
-              to={item.to}
-              className={({ isActive }) =>
-                cn(
-                  "rounded-md px-3 py-2 text-sm transition-colors",
-                  isActive
-                    ? "text-foreground bg-panel-hover"
-                    : "text-muted-foreground hover:text-foreground"
-                )
-              }
+              href={item.to}
+              aria-current={pathname === item.to ? "page" : undefined}
+              className={cn(
+                "rounded-md px-3 py-2 text-sm transition-colors",
+                pathname === item.to
+                  ? "text-foreground bg-panel-hover"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
             >
               {item.label}
-            </NavLink>
+            </a>
           ))}
         </nav>
 
@@ -81,10 +77,10 @@ export function Header() {
           </Button>
 
           <Button asChild size="sm" className="hidden sm:inline-flex">
-            <Link to="/download">
+            <a href="/download">
               <Download />
               Скачать
-            </Link>
+            </a>
           </Button>
 
           <Sheet open={open} onOpenChange={setOpen}>
@@ -103,28 +99,27 @@ export function Header() {
               <nav className="flex flex-col gap-1 px-4">
                 {NAV.map((item) => (
                   <SheetClose asChild key={item.to}>
-                    <NavLink
-                      to={item.to}
-                      className={({ isActive }) =>
-                        cn(
-                          "rounded-md px-3 py-2.5 text-[15px] transition-colors",
-                          isActive
-                            ? "text-foreground bg-panel-hover"
-                            : "text-muted-foreground hover:text-foreground"
-                        )
-                      }
+                    <a
+                      href={item.to}
+                      aria-current={pathname === item.to ? "page" : undefined}
+                      className={cn(
+                        "rounded-md px-3 py-2.5 text-[15px] transition-colors",
+                        pathname === item.to
+                          ? "text-foreground bg-panel-hover"
+                          : "text-muted-foreground hover:text-foreground"
+                      )}
                     >
                       {item.label}
-                    </NavLink>
+                    </a>
                   </SheetClose>
                 ))}
               </nav>
               <div className="mt-auto flex flex-col gap-2 p-6">
                 <Button asChild>
-                  <Link to="/download">
+                  <a href="/download">
                     <Download />
                     Скачать beide
-                  </Link>
+                  </a>
                 </Button>
                 <Button asChild variant="outline">
                   <a href={SITE.repo} target="_blank" rel="noreferrer noopener">

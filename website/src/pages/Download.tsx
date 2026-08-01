@@ -1,4 +1,3 @@
-import { Link } from "react-router-dom";
 import { AlertTriangle, ArrowRight, Cpu, Github, MonitorSmartphone, Package } from "lucide-react";
 
 import ElectricBorder from "@/components/originkit/electric-border";
@@ -34,7 +33,7 @@ const REQUIREMENTS = [
   {
     icon: Package,
     title: "Ключ провайдера",
-    body: "Достаточно одного: Anthropic, xAI, NVIDIA или Google. Без ключа агент не ответит.",
+    body: "Добавьте ключ EchoGate в локальный .env. Без ключа агент не ответит.",
   },
 ];
 
@@ -50,7 +49,7 @@ const STEPS = [
   {
     n: "02",
     title: "Подключить провайдера",
-    code: "# Anthropic и xAI — через профиль pi\nnpx pi auth login\n\n# NVIDIA и Google — ключами в .env\ncopy .env.example .env",
+    code: "copy .env.example .env\n# Добавьте BEIDE_ECHOGATE_API_KEY в .env",
   },
   {
     n: "03",
@@ -193,12 +192,10 @@ export default function Download() {
               <div className="flex flex-col gap-2">
                 <p className="font-medium">Ключи не кладите в репозиторий</p>
                 <p className="text-muted-foreground text-sm leading-relaxed">
-                  Anthropic и xAI хранят авторизацию в профиле pi
-                  (<span className="font-mono">~/.pi/agent</span>), NVIDIA и
-                  Google читаются из <span className="font-mono">.env</span>,
-                  который уже добавлен в{" "}
-                  <span className="font-mono">.gitignore</span>. beide не
-                  пересылает ключи никуда, кроме самого провайдера.
+                  Ключ EchoGate читается из локального{" "}
+                  <span className="font-mono">.env</span>, который уже добавлен
+                  в <span className="font-mono">.gitignore</span>. beide не
+                  пересылает ключ никуда, кроме EchoGate.
                 </p>
               </div>
             </div>
@@ -228,9 +225,9 @@ export default function Download() {
                 </h2>
                 <div className="flex flex-col gap-3 sm:flex-row">
                   <Button asChild variant="outline">
-                    <Link to="/docs#troubleshooting">
+                    <a href="/docs#troubleshooting">
                       Раздел «Если что-то не работает»
-                    </Link>
+                    </a>
                   </Button>
                   <Button asChild variant="ghost">
                     <a

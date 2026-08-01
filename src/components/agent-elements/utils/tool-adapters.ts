@@ -49,6 +49,20 @@ export function mapToolStateToStepState(
   return aiState === "result" ? "complete" : "animating";
 }
 
+/**
+ * Map an AI-SDK part state onto the invocation states the cards understand.
+ * "output-error" is terminal: mapping it to "call" (as every card used to do
+ * inline) left failed tools shimmering as "running" forever — including in
+ * transcripts restored from disk.
+ */
+export function partToInvocationState(
+  state: string | undefined,
+): "partial-call" | "call" | "result" {
+  if (state === "output-available" || state === "output-error") return "result";
+  if (state === "input-streaming") return "partial-call";
+  return "call";
+}
+
 export function mapToolNameToVariant(
   toolName: string,
 ): "thinking" | "action" | "search" | undefined {
@@ -76,8 +90,9 @@ function extractToolDetail(
     case "Edit":
     case "Write":
     case "Read":
+      // Windows paths arrive with backslashes — normalize before basename.
       return args?.file_path
-        ? (String(args.file_path).split("/").pop() ?? "")
+        ? (String(args.file_path).replace(/\\/g, "/").split("/").pop() ?? "")
         : "";
     case "Grep":
       return args?.pattern ? String(args.pattern) : "";

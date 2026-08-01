@@ -2,7 +2,7 @@
 
 **beide** — desktop IDE с AI-агентом на базе [pi](https://github.com/earendil-works). Сделана в Беларуси. Ощущение как Cursor + VS Code, без лишнего.
 
-Windows-first. Модели выбираются в чате: Anthropic (Claude) и xAI — через логин pi в `~/.pi/agent`, NVIDIA и Google — по ключам из `.env`.
+Windows-first. Модели выбираются в чате и работают через EchoGate по ключу из локального `.env`.
 
 ---
 
@@ -10,7 +10,7 @@ Windows-first. Модели выбираются в чате: Anthropic (Claude)
 
 **beide** is a Windows desktop IDE with a built-in AI coding agent (pi SDK). Made in Belarus. Open a folder, edit in Monaco, chat with the agent on the right — Plan mode for research, Agent mode for edits. Permissions default to ask-before-write.
 
-**Requirements:** Node 22+, Windows, pi auth in `~/.pi/agent` (Anthropic / xAI) and/or provider keys in `.env` (NVIDIA / Google).
+**Requirements:** Node 22+, Windows, and `BEIDE_ECHOGATE_API_KEY` in local `.env`.
 
 ```bash
 npm install
@@ -25,12 +25,11 @@ npm run dev
 |---|---|
 | OS | Windows 10/11 |
 | Node | **22+** (разработка велась на 24) |
-| Auth | pi agent dir `~/.pi/agent` (Anthropic, xAI) и/или ключи в `.env` (NVIDIA, Google) |
+| Auth | `BEIDE_ECHOGATE_API_KEY` в локальном `.env` |
 
-Anthropic и xAI подключаются один раз через `pi auth login` — beide не хранит их
-ключи сам, а читает то, что уже лежит в `~/.pi/agent`. Ключи NVIDIA и Google
-берутся из `.env` (`BEIDE_NVIDIA_API_KEY`, `BEIDE_GOOGLE_API_KEY`), см.
-[`.env.example`](.env.example). Каталог моделей — `src/lib/models.ts`.
+Скопируйте [`.env.example`](.env.example) в `.env` и добавьте
+`BEIDE_ECHOGATE_API_KEY`. Файл не попадает в репозиторий. Каталог моделей —
+`src/lib/models.ts`.
 
 ## Быстрый старт
 
@@ -104,16 +103,13 @@ specs/        # PRODUCT, ARCHITECTURE, MVP checklist (исторические �
 
 Симптом: чат не стримит / `agent not ready` / ошибка модели.
 
-1. Проверьте, что pi залогинен: `pi auth login` создаёт `~/.pi/agent/auth.json`
-   (на Windows — `%USERPROFILE%\.pi\agent`). Anthropic и xAI берутся только оттуда.
-2. Для NVIDIA / Google проверьте `.env` — без ключа модель этого провайдера
-   недоступна, и beide переключится на первую доступную (в чат придёт warning).
-3. Перезапустите `npm run dev` после смены auth или `.env` — main process читает
-   их при старте сессии.
-4. Откройте папку (workspace): без неё сессии и чекпойнты недоступны.
-5. Корп. proxy / firewall: Electron main ходит в API провайдера напрямую; нужен обычный HTTPS outbound.
+1. Проверьте `BEIDE_ECHOGATE_API_KEY` в локальном `.env`.
+2. Перезапустите `npm run dev` после смены `.env` — main process читает ключ при
+   старте сессии.
+3. Откройте папку (workspace): без неё сессии и чекпойнты недоступны.
+4. Корп. proxy / firewall: Electron main ходит в EchoGate напрямую; нужен обычный HTTPS outbound.
 
-beide **не** пишет ключи в репозиторий и **не** дублирует их в `userData` сверх того, что делает pi.
+beide **не** пишет ключ в репозиторий и не передаёт его дочерним shell-командам.
 
 ## Позиционирование
 

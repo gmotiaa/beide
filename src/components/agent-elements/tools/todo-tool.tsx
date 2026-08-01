@@ -1,4 +1,5 @@
 import { memo, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { CheckIcon, IconArrowRight } from "../icons";
 import { TextShimmer } from "../text-shimmer";
 import { getToolStatus, areToolPropsEqual } from "../utils/format-tool";
@@ -127,6 +128,7 @@ export const TodoTool = memo(function TodoTool({
   part,
   chatStatus,
 }: TodoToolProps) {
+  const { t } = useTranslation();
   const { isPending } = getToolStatus(part, chatStatus);
 
   const isStreaming = part.state === "input-streaming";
@@ -139,8 +141,20 @@ export const TodoTool = memo(function TodoTool({
     [oldTodos, newTodos],
   );
 
-  // Streaming placeholder — always shimmer while in this transient state.
+  // Placeholder while the call is transient. A COMPLETED call whose todos
+  // were lost (legacy transcript, arg-extraction miss) used to fall in here
+  // too and shimmer "Creating…" forever — settle it as a static row instead.
   if (isStreaming || newTodos.length === 0) {
+    const label = isCreation
+      ? t("agentElements.todoCreating")
+      : t("agentElements.todoUpdating");
+    if (!isStreaming && !isPending) {
+      return (
+        <div className="space-y-2 text-sm leading-relaxed text-an-foreground/80">
+          <div className="text-an-foreground/60">{t("agentElements.todoUpdated")}</div>
+        </div>
+      );
+    }
     return (
       <div className="space-y-2 text-sm leading-relaxed text-an-foreground/80">
         <div className="text-an-foreground/60">
@@ -149,7 +163,7 @@ export const TodoTool = memo(function TodoTool({
             duration={1.2}
             className="inline-flex items-center text-sm leading-none h-4 m-0"
           >
-            {isCreation ? "Creating to-do list..." : "Updating to-dos..."}
+            {label}
           </TextShimmer>
         </div>
       </div>

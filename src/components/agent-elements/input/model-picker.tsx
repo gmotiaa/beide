@@ -19,10 +19,11 @@ export const ModelPicker = memo(function ModelPicker({
   value,
   defaultValue,
   onChange,
-  placeholder = "Auto",
+  placeholder,
   className,
 }: ModelPickerProps) {
   const { t } = useTranslation();
+  const resolvedPlaceholder = placeholder ?? t("agentElements.modelAuto");
   const isControlled = value !== undefined;
   const [internalValue, setInternalValue] = useState(defaultValue);
   const activeId = isControlled ? value : internalValue;
@@ -44,6 +45,7 @@ export const ModelPicker = memo(function ModelPicker({
       onOpenChange={setOpen}
       side="top"
       align="start"
+      className="w-56 p-0 overflow-hidden"
       trigger={
         <button
           type="button"
@@ -54,7 +56,7 @@ export const ModelPicker = memo(function ModelPicker({
           aria-label={t("agentElements.selectModel")}
         >
           <span className="font-medium">
-            {activeModel?.name ?? placeholder}
+            {activeModel?.name ?? resolvedPlaceholder}
           </span>
           {activeModel?.version && (
             <span className="font-normal text-foreground/25">
@@ -65,30 +67,59 @@ export const ModelPicker = memo(function ModelPicker({
         </button>
       }
     >
-      {models.map((model) => {
-        const isActive = model.id === activeModel?.id;
-        return (
-          <button
-            key={model.id}
-            type="button"
-            onClick={() => handleSelect(model.id)}
-            className={cn(
-              "flex w-full items-center gap-2 rounded-[6px] px-2 py-1.5 text-left text-[12px] leading-4 text-an-foreground transition-colors hover:bg-foreground/6 cursor-pointer",
-              isActive && "bg-foreground/6",
-            )}
-          >
-            <span className="flex-1 truncate">
-              {model.name}
-              {model.version && (
-                <span className="ml-1 text-foreground/40">{model.version}</span>
+      {/* 19 models × 9 groups outgrow the screen as a plain popup — cap the
+          height to the viewport and scroll inside instead. */}
+      <div className="max-h-[min(340px,55vh)] overflow-y-auto overscroll-contain p-1">
+        {models.map((model, index) => {
+          const isActive = model.id === activeModel?.id;
+          const groupStart =
+            model.group && model.group !== models[index - 1]?.group;
+          return (
+            <div key={model.id}>
+              {groupStart && (
+                <div
+                  className={cn(
+                    "px-2 pb-px pt-1 text-[9px] font-semibold uppercase tracking-[0.08em] text-foreground/30 select-none",
+                    index > 0 && "mt-0.5",
+                  )}
+                >
+                  {model.group}
+                </div>
               )}
-            </span>
-            {isActive && (
-              <IconCheck className="size-3.5 shrink-0 text-foreground/60" />
-            )}
-          </button>
-        );
-      })}
+              <button
+                type="button"
+                disabled={model.disabled}
+                title={model.disabled ? t("agentElements.modelUnavailable") : undefined}
+                onClick={model.disabled ? undefined : () => handleSelect(model.id)}
+                className={cn(
+                  "flex w-full items-center gap-2 rounded-[6px] px-2 py-1 text-left text-[12px] leading-4 text-an-foreground transition-colors",
+                  model.disabled
+                    ? "cursor-not-allowed text-foreground/25"
+                    : "hover:bg-foreground/6 cursor-pointer",
+                  isActive && "bg-foreground/6",
+                )}
+              >
+                <span className="flex-1 truncate">
+                  {model.name}
+                  {model.version && (
+                    <span
+                      className={cn(
+                        "ml-1",
+                        model.disabled ? "text-foreground/20" : "text-foreground/40",
+                      )}
+                    >
+                      {model.version}
+                    </span>
+                  )}
+                </span>
+                {isActive && (
+                  <IconCheck className="size-3.5 shrink-0 text-foreground/60" />
+                )}
+              </button>
+            </div>
+          );
+        })}
+      </div>
     </Popover>
   );
 });
@@ -103,9 +134,10 @@ export type ModelBadgeProps = {
 export const ModelBadge = memo(function ModelBadge({
   models,
   value,
-  placeholder = "Auto",
+  placeholder,
   className,
 }: ModelBadgeProps) {
+  const { t } = useTranslation();
   const activeModel = models.find((m) => m.id === value) ?? models[0];
   return (
     <div
@@ -114,7 +146,9 @@ export const ModelBadge = memo(function ModelBadge({
         className,
       )}
     >
-      <span className="font-medium">{activeModel?.name ?? placeholder}</span>
+      <span className="font-medium">
+        {activeModel?.name ?? placeholder ?? t("agentElements.modelAuto")}
+      </span>
       {activeModel?.version && (
         <span className="ml-0.5 font-normal text-foreground/20">
           {activeModel.version}

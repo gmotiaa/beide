@@ -37,6 +37,7 @@ import {
   DEFAULT_MODEL_ID,
   MODEL_CATALOG,
   MODEL_OPTIONS,
+  VENDOR_LABELS,
   findModel,
 } from "../../lib/models";
 import type { AgentMode, ChatImage } from "../../lib/types";
@@ -84,6 +85,8 @@ export function ChatPanel() {
   const model = useAgentStore((s) => s.model);
   const setModel = useAgentStore((s) => s.setModel);
   const providers = useAgentStore((s) => s.providers);
+  const providersLoaded = useAgentStore((s) => s.providersLoaded);
+  const retryNotice = useAgentStore((s) => s.retryNotice);
   const send = useAgentStore((s) => s.send);
   const abort = useAgentStore((s) => s.abort);
 
@@ -159,16 +162,26 @@ export function ChatPanel() {
 
   const uiMessages = useMemo(() => toUIMessages(messages), [messages]);
   const modelLabel = modelLabelFor(model);
+  const hasConnectedProvider = providers.some((provider) => provider.connected);
+  const canSend = ready && providersLoaded && hasConnectedProvider;
 
   /**
    * Offering a model whose provider holds no credentials only buys a failed
-   * request three steps later — Claude is listed once `pi auth login` (or an
-   * API key) is in place, and hidden otherwise. Until the status arrives, or
-   * if nothing at all is connected, the full catalog stays visible so the
-   * picker never renders empty.
+   * request three steps later — models are listed once the EchoGate key is in
+   * place, and hidden otherwise. Until the status arrives, or if nothing at
+   * all is connected, the full catalog stays visible so the picker never
+   * renders empty.
    */
   const modelOptions = useMemo(() => {
-    if (!providers.length) return MODEL_OPTIONS;
+    const withGroups = (list: typeof MODEL_OPTIONS) =>
+      list.map(({ id, name, version, vendor, disabled }) => ({
+        id,
+        name,
+        version,
+        disabled,
+        group: VENDOR_LABELS[vendor],
+      }));
+    if (!providers.length) return withGroups(MODEL_OPTIONS);
     const connected = new Set(
       providers.filter((p) => p.connected).map((p) => p.id),
     );
@@ -176,8 +189,8 @@ export function ChatPanel() {
     const allowed = MODEL_CATALOG.filter(
       (m) => connected.has(m.provider) || m.id === current?.id,
     );
-    if (!allowed.length) return MODEL_OPTIONS;
-    return allowed.map(({ id, name, version }) => ({ id, name, version }));
+    if (!allowed.length) return withGroups(MODEL_OPTIONS);
+    return withGroups(allowed);
   }, [providers, model]);
 
   const status: ChatStatus = streaming
@@ -220,12 +233,24 @@ export function ChatPanel() {
         setError(t("chat.openProjectFirst"));
         return;
       }
+      if (!providersLoaded || !hasConnectedProvider) {
+        setError(t("chat.noProviderConfigured"));
+        return;
+      }
       const text = (content ?? "").trim();
       if (!text && images.length === 0) return;
       void send(text);
-      setDraft("");
     },
-    [ready, send, setError, setDraft, images.length, t],
+    [
+      ready,
+      providersLoaded,
+      hasConnectedProvider,
+      send,
+      setError,
+      setDraft,
+      images.length,
+      t,
+    ],
   );
 
   const onStop = useCallback(() => {
@@ -291,20 +316,24 @@ export function ChatPanel() {
   // The composer is the natural home for "you have no project open": it sits
   // next to the control that fixes it. `infoBar` is the slot the library
   // provides for exactly this.
-  const infoBar = useMemo(
-    () =>
-      ready
-        ? undefined
-        : {
-            title: t("chat.noProjectTitle"),
-            description: t("chat.noProjectBody"),
-            action: {
-              label: t("chat.noProjectAction"),
-              onClick: () => void openFolder(),
-            },
-          },
-    [ready, openFolder, t],
-  );
+  const infoBar = useMemo(() => {
+    if (!ready) {
+      return {
+        title: t("chat.noProjectTitle"),
+        description: t("chat.noProjectBody"),
+        action: {
+          label: t("chat.noProjectAction"),
+          onClick: () => void openFolder(),
+        },
+      };
+    }
+    // Mid-turn retries happen after the planning row is gone — the composer
+    // info bar is the only place that is always visible.
+    if (retryNotice) {
+      return { title: retryNotice, description: t("chat.providerRetryHint") };
+    }
+    return undefined;
+  }, [ready, retryNotice, openFolder, t]);
 
   return (
     <TooltipProvider delay={200}>
@@ -430,6 +459,7 @@ export function ChatPanel() {
                 showCopyToolbar
                 enableImagePreview
                 className="chat-panel__messages"
+                planningLabelOverride={retryNotice ?? undefined}
               />
             )}
             {/* MessageList renders the error part appended to listMessages, so
@@ -445,9 +475,15 @@ export function ChatPanel() {
               value={draft}
               onChange={setDraft}
               placeholder={
-                ready ? t("chat.placeholder") : t("chat.openProjectFirst")
+                !ready
+                  ? t("chat.openProjectFirst")
+                  : !providersLoaded
+                    ? t("chat.checkingProvider")
+                    : hasConnectedProvider
+                      ? t("chat.placeholder")
+                      : t("chat.noProviderConfigured")
               }
-              disabled={!ready}
+              disabled={!canSend}
               onAttach={supportsImages ? onAttach : undefined}
               attachedImages={attachedImages}
               onRemoveImage={(id) => {

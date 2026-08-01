@@ -1,4 +1,5 @@
 import React, { memo } from "react";
+import { useTranslation } from "react-i18next";
 import { MultiFileDiff, type FileContents } from "@pierre/diffs/react";
 import { TextShimmer } from "../text-shimmer";
 import type { TimelineStep, StepState } from "../types/timeline";
@@ -8,6 +9,7 @@ import { FileExtIcon } from "../icons/file-ext-icon";
 import {
   mapToolInvocationToStep,
   mapToolStateToStepState,
+  partToInvocationState,
 } from "../utils/tool-adapters";
 import { ToolApprovalFooter, type ToolApproval } from "./tool-approval-footer";
 
@@ -19,6 +21,7 @@ export type EditToolDiffCardProps = {
   output?: Record<string, unknown>;
   isCollapsible?: boolean;
   approval?: ToolApproval;
+  isError?: boolean;
 };
 
 export function EditToolDiffCard({
@@ -29,10 +32,14 @@ export function EditToolDiffCard({
   output,
   isCollapsible = false,
   approval,
+  isError = false,
 }: EditToolDiffCardProps) {
+  const { t } = useTranslation();
   useToolComplete(state === "animating", step.duration, onComplete);
   const isPending = state === "animating";
-  const fileName = step.filePath?.split("/").pop() ?? step.toolDetail;
+  // Windows paths arrive with backslashes — normalize before basename.
+  const fileName =
+    step.filePath?.replace(/\\/g, "/").split("/").pop() ?? step.toolDetail;
   const hasFileName = Boolean(fileName);
   const isWrite = step.toolName === "Write";
   const [themeType, setThemeType] = React.useState<"light" | "dark">("light");
@@ -102,15 +109,24 @@ export function EditToolDiffCard({
     return { oldFile, newFile };
   }, [fileName, input, output, step.diffLines]);
 
+  // Feed MultiFileDiff's internal surfaces from the same token the editor and
+  // terminal use — the previous pure-black literals punched a hole through
+  // every palette that is not #000. Hover/separator are derived by nudging
+  // --code-bg toward the theme's text color.
+  const DIFF_BG = "var(--code-bg)";
+  const DIFF_BG_HOVER = "color-mix(in srgb, var(--code-bg) 96%, var(--text))";
+  const DIFF_BG_SEPARATOR =
+    "color-mix(in srgb, var(--code-bg) 92%, var(--text))";
+
   const diffCssVars = React.useMemo(
     () =>
       themeType === "dark"
         ? ({
-            "--diffs-bg": "#000",
-            "--diffs-bg-buffer-override": "#000",
-            "--diffs-bg-context-override": "#000",
-            "--diffs-bg-hover-override": "#0a0a0a",
-            "--diffs-bg-separator-override": "#0f0f0f",
+            "--diffs-bg": DIFF_BG,
+            "--diffs-bg-buffer-override": DIFF_BG,
+            "--diffs-bg-context-override": DIFF_BG,
+            "--diffs-bg-hover-override": DIFF_BG_HOVER,
+            "--diffs-bg-separator-override": DIFF_BG_SEPARATOR,
           } as React.CSSProperties)
         : undefined,
     [themeType],
@@ -125,22 +141,21 @@ export function EditToolDiffCard({
 [data-diffs-header],
 [data-error-wrapper],
 [data-virtualizer-buffer] {
-  --diffs-bg: #000;
-  --diffs-bg-buffer-override: #000;
-  --diffs-bg-context-override: #000;
-  --diffs-bg-hover-override: #0a0a0a;
-  --diffs-bg-separator-override: #0f0f0f;
+  --diffs-bg: ${DIFF_BG};
+  --diffs-bg-buffer-override: ${DIFF_BG};
+  --diffs-bg-context-override: ${DIFF_BG};
+  --diffs-bg-hover-override: ${DIFF_BG_HOVER};
+  --diffs-bg-separator-override: ${DIFF_BG_SEPARATOR};
 }
 `
         : undefined,
     [themeType],
   );
 
-  const diffClassName =
-    "an-edit-diff dark:bg-black dark:[--diffs-bg:#000] dark:[--diffs-bg-buffer-override:#000] dark:[--diffs-bg-context-override:#000] dark:[--diffs-bg-hover-override:#0a0a0a] dark:[--diffs-bg-separator-override:#0f0f0f]";
+  const diffClassName = "an-edit-diff";
 
   return (
-    <div className="an-edit-tool-card rounded-an-tool-border-radius border border-an-tool-border-color bg-an-tool-background dark:bg-black overflow-hidden">
+    <div className="an-edit-tool-card rounded-an-tool-border-radius border border-an-tool-border-color bg-an-tool-background overflow-hidden">
       <div
         className={
           // Explicit bg-an-tool-background so the header keeps its light-grey
@@ -158,15 +173,25 @@ export function EditToolDiffCard({
           )}
           {isPending && !diffFiles ? (
             <TextShimmer as="span" duration={1.2} className="text-xs">
-              Generating...
+              {t("agentElements.editGenerating")}
             </TextShimmer>
           ) : isPending ? (
             <TextShimmer as="span" duration={1.2} className="text-xs">
-              {isWrite ? "Creating" : "Editing"} {fileName}
+              {t(isWrite ? "agentElements.editCreating" : "agentElements.editEditing", {
+                file: fileName,
+              })}
             </TextShimmer>
+          ) : isError ? (
+            <span className="text-xs text-destructive truncate">
+              {t(isWrite ? "agentElements.editCreateFailed" : "agentElements.editEditFailed", {
+                file: fileName,
+              })}
+            </span>
           ) : (
             <span className="text-xs text-an-tool-color-muted truncate">
-              {isWrite ? "Created" : "Edited"} {fileName}
+              {t(isWrite ? "agentElements.editCreated" : "agentElements.editEdited", {
+                file: fileName,
+              })}
             </span>
           )}
         </div>
@@ -221,7 +246,11 @@ export function EditToolDiffCard({
                 <button
                   type="button"
                   onClick={() => setIsExpanded((prev) => !prev)}
-                  aria-label={isExpanded ? "Hide" : "Show more"}
+                  aria-label={
+                    isExpanded
+                      ? t("agentElements.collapseDiff")
+                      : t("agentElements.expandDiff")
+                  }
                   className={
                     "group absolute inset-x-0 bottom-0 h-16 flex items-end justify-center pb-2 text-muted-foreground " +
                     (isExpanded
@@ -259,24 +288,14 @@ export const EditTool = memo(function EditTool({
     | ToolApproval
     | undefined;
   const toolName = (part.type as string)?.replace("tool-", "") || "Edit";
+  const invocationState = partToInvocationState(part.state);
   const step = mapToolInvocationToStep(part.toolCallId ?? part.id ?? "edit", {
     toolName,
     args: part.input ?? part.args ?? {},
-    state:
-      part.state === "output-available"
-        ? "result"
-        : part.state === "input-streaming"
-          ? "partial-call"
-          : "call",
+    state: invocationState,
     result: part.output ?? part.result,
   });
-  const stepState = mapToolStateToStepState(
-    part.state === "output-available"
-      ? "result"
-      : part.state === "input-streaming"
-        ? "partial-call"
-        : "call",
-  );
+  const stepState = mapToolStateToStepState(invocationState);
   const noop = () => {};
 
   return (
@@ -288,6 +307,7 @@ export const EditTool = memo(function EditTool({
       output={part.output ?? part.result}
       isCollapsible={isCollapsible}
       approval={approval}
+      isError={part.state === "output-error"}
     />
   );
 });

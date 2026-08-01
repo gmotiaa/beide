@@ -1,4 +1,5 @@
 import React, { memo } from "react";
+import { useTranslation } from "react-i18next";
 import { toolRegistry, parseMcpToolType } from "./tool-registry";
 import { getToolStatus } from "../utils/format-tool";
 import { GenericTool } from "./generic-tool";
@@ -37,6 +38,7 @@ export const ToolRenderer = memo(function ToolRenderer({
   chatStatus,
   toolRenderers,
 }: ToolRendererProps) {
+  const { t } = useTranslation();
   const partType = part.type as string;
 
   // Specialized tool components with variant dispatch
@@ -64,9 +66,9 @@ export const ToolRenderer = memo(function ToolRenderer({
           part={part}
           nestedTools={nestedTools}
           chatStatus={chatStatus}
-          completeLabel={`${labelBase} completed`}
-          shimmerLabel={`Running ${labelBase.toLowerCase()}`}
-          interruptedLabel={`${labelBase} interrupted`}
+          completeLabel={t("agentElements.groupCompleted", { name: labelBase })}
+          shimmerLabel={t("agentElements.groupRunning", { name: labelBase })}
+          interruptedLabel={t("agentElements.groupInterrupted", { name: labelBase })}
           defaultOpen={false}
         />
       );
@@ -106,6 +108,7 @@ export const ToolRenderer = memo(function ToolRenderer({
     const { isPending, isError } = getToolStatus(part, chatStatus);
     return (
       <GenericTool
+        icon={meta.icon}
         title={meta.title(part)}
         subtitle={meta.subtitle?.(part)}
         isPending={isPending}
@@ -119,7 +122,9 @@ export const ToolRenderer = memo(function ToolRenderer({
   const { isPending, isError } = getToolStatus(part, chatStatus);
   return (
     <GenericTool
-      title={isPending ? `Running ${toolName}` : toolName}
+      title={
+        isPending ? t("agentElements.toolRunningName", { name: toolName }) : toolName
+      }
       isPending={isPending}
       isError={isError}
     />

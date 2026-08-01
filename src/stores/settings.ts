@@ -1,7 +1,9 @@
 import { create } from "zustand";
+import { DEFAULT_MODEL_ID } from "../lib/models";
 import type { BeideSettings, CheckpointInfo, ThemeId } from "../lib/types";
 import { getBeide } from "../lib/ipc";
-import { setAppLanguage } from "../i18n";
+import i18n, { setAppLanguage } from "../i18n";
+import { useEditorStore } from "./editor";
 
 export const SETTINGS_DEFAULTS: BeideSettings = {
   language: "ru",
@@ -9,7 +11,8 @@ export const SETTINGS_DEFAULTS: BeideSettings = {
   permissionMode: "ask",
   telemetryEnabled: false,
   defaultAgentMode: "agent",
-  modelLabel: "minimaxai/minimax-m3",
+  modelLabel: DEFAULT_MODEL_ID,
+  lastWorkspacePath: null,
 };
 
 function applyTheme(theme: ThemeId): void {
@@ -91,6 +94,19 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   restoreCheckpoint: async (id) => {
     const api = getBeide();
     if (!api) return;
+    const checkpoint = get().checkpoints.find((item) => item.id === id);
+    const paths = new Set(checkpoint?.files.map((path) => path.replace(/\\/g, "/")) ?? []);
+    const dirtyAffected = useEditorStore
+      .getState()
+      .tabs.filter((tab) => tab.dirty && paths.has(tab.path.replace(/\\/g, "/")));
+    if (
+      dirtyAffected.length > 0 &&
+      !window.confirm(
+        i18n.t("settings.restoreDirtyConfirm", { count: dirtyAffected.length }),
+      )
+    ) {
+      return;
+    }
     await api.checkpoint.restore(id);
     await get().refreshCheckpoints();
   },
