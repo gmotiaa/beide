@@ -56,8 +56,8 @@ import {
 } from "./paths";
 import type { SessionService } from "./sessions";
 import type { SettingsService } from "./settings";
-import { decryptProviderKey } from "./provider-key";
 import { validatePlanCommand } from "./plan-command";
+import { McpManager } from "./mcp";
 
 const PREFERRED_MODEL = DEFAULT_MODEL_ID;
 
@@ -70,6 +70,16 @@ const PREFERRED_MODEL = DEFAULT_MODEL_ID;
 function echogateEnvKey(): string {
   return process.env.BEIDE_ECHOGATE_API_KEY ?? "";
 }
+
+/**
+ * Default model route: the Supabase Edge Function proxy. The gateway key
+ * lives ONLY server-side (app_config, service role); clients authenticate
+ * with their Supabase JWT and the function pre-checks usage limits. The
+ * project URL matches src/lib/supabase.ts (baked-in public project).
+ * A BEIDE_ECHOGATE_API_KEY in .env switches to the direct gateway (dev).
+ */
+const MODEL_PROXY_BASE_URL =
+  "https://opihhvfcykzdkqvpsqby.supabase.co/functions/v1/model-proxy/v1";
 
 const PROVIDER_LABELS: Record<ProviderStatus["id"], string> = {
   echogate: "beide Cloud",
@@ -223,6 +233,7 @@ function buildSystemPrompt(mode: AgentMode): string {
       "Можно: read/write/edit/bash + todo/plan.",
       "Задачи на 3+ шага — веди `todo`, обновляй статусы по ходу (один in_progress).",
       "Не останавливайся на «вот что нужно сделать» — делай правки сам, если это явно задача на реализацию.",
+      "САМОПРОВЕРКА: после правок запусти проверки проекта через bash (typecheck/тесты/линтер — смотри scripts в project_info) и почини, что сломалось, прежде чем отчитываться. Если проверок в проекте нет — скажи об этом явно.",
     );
   }
   return base.join("\n");
@@ -480,13 +491,15 @@ export class AgentService {
   private selectedModelId: string | null = null;
   private modelLabel: string | undefined;
   private modelRuntime: ModelRuntime | null = null;
-  /** Last key the echogate provider was registered with, to skip no-op recomposes. */
-  private registeredEchogateKey: string | null = null;
-  /** Provider key delivered from Supabase after sign-in. Memory only. */
-  private cloudEchogateKey: string | null = null;
+  /** Last auth+baseUrl the echogate provider was registered with (skip no-op recomposes). */
+  private registeredEchogateAuth: string | null = null;
+  /** Supabase access token pushed by the renderer; authenticates the model proxy. */
+  private supabaseAccessToken: string | null = null;
   private modelSupportsImages = false;
   private initPromise: Promise<void> | null = null;
   private runtimePromise: Promise<ModelRuntime> | null = null;
+  /** User-configured MCP servers (<workspace>/.beide/mcp.json), workspace-scoped. */
+  private mcp = new McpManager();
   /** Serialize prompts — prevent concurrent session.prompt races */
   private promptChain: Promise<unknown> = Promise.resolve();
 
@@ -523,6 +536,8 @@ export class AgentService {
 
   private async onWorkspaceChangedImpl(root: string | null): Promise<void> {
     await this.teardownSession({ reason: "workspace change" });
+    // MCP servers are workspace-scoped — kill them here, NOT on mode changes.
+    this.mcp.stopAll();
     this.pendingTranscript = [];
     this.pendingRuntimeMessages = null;
     this.currentTurnSessionId = null;
@@ -908,31 +923,29 @@ export class AgentService {
     }
   }
 
-  /** .env override is the dev escape hatch; the cloud-delivered key is the norm. */
+  /**
+   * .env key → talk to the gateway directly (dev). Otherwise the Supabase
+   * access token authenticates the model-proxy Edge Function — the raw
+   * provider key never exists in this process at all.
+   */
   private effectiveEchogateKey(): string {
-    return echogateEnvKey().trim() || this.cloudEchogateKey || "";
+    return echogateEnvKey().trim() || this.supabaseAccessToken || "";
+  }
+
+  /** Where the OpenAI-compatible requests go, matching the credential above. */
+  private effectiveBaseUrl(): string {
+    return echogateEnvKey().trim() ? ECHOGATE_BASE_URL : MODEL_PROXY_BASE_URL;
   }
 
   /**
-   * Install the provider key fetched from Supabase by the renderer. Arrives as
-   * AES-256-GCM ciphertext; the plaintext lives only in this process's memory
-   * (never on disk, and stripSecretEnv keeps it out of agent-driven shells —
-   * it is installed as a runtime override, not an env var).
+   * The renderer pushes the (auto-refreshing) Supabase access token here on
+   * every auth state change. Memory only; stripSecretEnv keeps it out of
+   * agent-driven shells because it is a runtime override, not an env var.
    */
-  async installEncryptedProviderKey(
-    ciphertext: string,
-  ): Promise<{ ok: boolean; error?: string }> {
-    let key: string;
-    try {
-      key = decryptProviderKey(ciphertext);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error("[agent] provider key decrypt failed:", message);
-      return { ok: false, error: "Provider key payload is invalid" };
-    }
-    this.cloudEchogateKey = key;
+  async setAccessToken(token: string): Promise<{ ok: boolean }> {
+    this.supabaseAccessToken = token.trim() || null;
     // Re-arm an already-created runtime; otherwise the next ensureRuntime()
-    // picks the key up on construction.
+    // picks the token up on construction.
     if (this.modelRuntime) {
       this.registerEchoGateProvider(this.modelRuntime, this.effectiveEchogateKey());
       await this.syncRuntimeApiKey(
@@ -964,7 +977,7 @@ export class AgentService {
     messages.push({ role: "user", content: opts.prompt });
     try {
       ensureHttpDispatcher();
-      const res = await fetch(`${ECHOGATE_BASE_URL}/chat/completions`, {
+      const res = await fetch(`${this.effectiveBaseUrl()}/chat/completions`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${key}`,
@@ -1034,10 +1047,12 @@ export class AgentService {
    * config (see providers.md → Resolution Order).
    */
   private registerEchoGateProvider(runtime: ModelRuntime, key: string): void {
-    if (this.registeredEchogateKey === key) return;
+    const baseUrl = this.effectiveBaseUrl();
+    const auth = `${key}|${baseUrl}`;
+    if (this.registeredEchogateAuth === auth) return;
     runtime.registerProvider("echogate", {
       name: "EchoGate",
-      baseUrl: ECHOGATE_BASE_URL,
+      baseUrl,
       api: "openai-completions",
       authHeader: true,
       ...(key.trim() ? { apiKey: key } : {}),
@@ -1054,7 +1069,7 @@ export class AgentService {
         compat: ECHOGATE_COMPAT,
       })),
     });
-    this.registeredEchogateKey = key;
+    this.registeredEchogateAuth = auth;
   }
 
   private async syncRuntimeApiKey(
@@ -1099,7 +1114,8 @@ export class AgentService {
     if (!modelId) return undefined;
     const catalogId = findModel(modelId)?.id;
     return catalogId && ECHOGATE_MODELS[catalogId]
-      ? { ...ECHOGATE_MODELS[catalogId] }
+      ? // baseUrl is per-route: direct gateway with a dev key, proxy otherwise.
+        { ...ECHOGATE_MODELS[catalogId], baseUrl: this.effectiveBaseUrl() }
       : undefined;
   }
 
@@ -1216,7 +1232,20 @@ export class AgentService {
     await resourceLoader.reload();
 
     const toolDefs = this.buildToolDefinitions(cwd);
-    // Full exploration toolkit — agent must be able to read the whole repo
+
+    // MCP servers are workspace-scoped: start() is a no-op when they already
+    // run for this cwd (mode/model changes recreate the session, not them).
+    try {
+      await this.mcp.start(cwd);
+    } catch (err) {
+      console.warn("[mcp] start failed:", err instanceof Error ? err.message : err);
+    }
+    const mcpToolDefs = this.buildMcpToolDefinitions();
+    const mcpToolNames = mcpToolDefs.map((def) => def.name);
+
+    // Full exploration toolkit — agent must be able to read the whole repo.
+    // MCP tools are available in both modes: they are external integrations,
+    // not workspace mutations (plan mode's write ban covers the builtins).
     const tools =
       this.mode === "plan"
         ? [
@@ -1231,6 +1260,7 @@ export class AgentService {
             "project_info",
             "git_status",
             "memory",
+            ...mcpToolNames,
           ]
         : [
             "read",
@@ -1246,6 +1276,7 @@ export class AgentService {
             "project_info",
             "git_status",
             "memory",
+            ...mcpToolNames,
           ];
 
     const { session, modelFallbackMessage } = await createAgentSession({
@@ -1256,7 +1287,7 @@ export class AgentService {
       tools,
       // ToolDefinition generics are invariant on renderCall args; runtime shapes match
       // custom write/edit/bash override builtins for permission + checkpoints
-      customTools: toolDefs as never,
+      customTools: [...toolDefs, ...mcpToolDefs] as never,
       resourceLoader,
       sessionManager: SessionManager.inMemory(cwd),
       settingsManager,
@@ -1745,6 +1776,55 @@ export class AgentService {
     ];
   }
 
+  /**
+   * Wrap every tool reported by running MCP servers as a pi custom tool.
+   * The MCP inputSchema is already a JSON Schema object — structurally what
+   * pi's typebox `parameters` is at runtime — so a well-formed object schema
+   * passes through as-is (`as never`, same trick as the customTools cast).
+   */
+  private buildMcpToolDefinitions() {
+    const mcp = this.mcp;
+    const usedNames = new Set<string>();
+    const defs = [];
+    for (const tool of mcp.getTools()) {
+      const base = `mcp_${tool.server}_${tool.name}`.replace(/[^a-z0-9_]/gi, "_");
+      let name = base;
+      for (let i = 2; usedNames.has(name); i++) name = `${base}_${i}`;
+      usedNames.add(name);
+
+      const schema = tool.inputSchema as { type?: unknown } | null | undefined;
+      const parameters =
+        schema && typeof schema === "object" && schema.type === "object"
+          ? (schema as never)
+          : Type.Object({});
+      const server = tool.server;
+      const toolName = tool.name;
+
+      defs.push(
+        defineTool({
+          name,
+          label: `${server}:${toolName}`,
+          description: (
+            tool.description || `MCP tool "${toolName}" from server "${server}"`
+          ).slice(0, 300),
+          parameters,
+          async execute(_id, params) {
+            const text = await mcp.callTool(
+              server,
+              toolName,
+              (params ?? {}) as Record<string, unknown>,
+            );
+            return {
+              content: [{ type: "text" as const, text }],
+              details: { server, tool: toolName },
+            };
+          },
+        }),
+      );
+    }
+    return defs;
+  }
+
   private async teardownSession(options?: {
     preserveRuntimeMessages?: boolean;
     reason?: string;
@@ -1776,6 +1856,7 @@ export class AgentService {
 
   async dispose(): Promise<void> {
     await this.teardownSession({ reason: "application shutdown" });
+    this.mcp.stopAll();
     this.modelRuntime = null;
   }
 }

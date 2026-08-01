@@ -435,7 +435,14 @@ async function runTests() {
       "parallel session appends are serialized without lost messages",
     );
 
-    await rm(testDir, { recursive: true, force: true });
+    // Windows: AV/indexer briefly locks fresh temp dirs — EBUSY here is
+    // environmental, not the invariant under test. Retry once.
+    try {
+      await rm(testDir, { recursive: true, force: true });
+    } catch {
+      await new Promise((r) => setTimeout(r, 500));
+      await rm(testDir, { recursive: true, force: true }).catch(() => undefined);
+    }
     console.log("  PASS: usage/settings JSON mutations are serialized and durable.");
     passed++;
   } catch (err) {
@@ -533,16 +540,22 @@ async function runTests() {
         flatten(child, prefix ? `${prefix}.${key}` : key),
       );
     };
-    const [ru, en] = await Promise.all([
+    const [ru, en, be] = await Promise.all([
       readFile(join(process.cwd(), "src", "i18n", "ru.json"), "utf-8"),
       readFile(join(process.cwd(), "src", "i18n", "en.json"), "utf-8"),
+      readFile(join(process.cwd(), "src", "i18n", "be.json"), "utf-8"),
     ]);
     assert.deepStrictEqual(
       flatten(JSON.parse(en)).sort(),
       flatten(JSON.parse(ru)).sort(),
       "ru/en translation key sets match",
     );
-    console.log("  PASS: ru/en translation resources have identical key sets.");
+    assert.deepStrictEqual(
+      flatten(JSON.parse(be)).sort(),
+      flatten(JSON.parse(ru)).sort(),
+      "be/ru translation key sets match",
+    );
+    console.log("  PASS: ru/en/be translation resources have identical key sets.");
     passed++;
   } catch (err) {
     console.error("  FAIL: translation key parity:", err);
@@ -603,7 +616,14 @@ async function runTests() {
     assert.strictEqual(msg?.images?.length, 1, "oversized image dropped, small one kept");
     assert.strictEqual(msg?.images?.[0]?.data.length, 500, "the surviving image is the small one");
 
-    await rm(testDir, { recursive: true, force: true });
+    // Windows: AV/indexer briefly locks fresh temp dirs — EBUSY here is
+    // environmental, not a failure of the invariant under test. Retry once.
+    try {
+      await rm(testDir, { recursive: true, force: true });
+    } catch {
+      await new Promise((r) => setTimeout(r, 500));
+      await rm(testDir, { recursive: true, force: true }).catch(() => undefined);
+    }
     console.log("  PASS: appendMessages strips photo-sized base64 before hitting disk.");
     passed++;
   } catch (err) {

@@ -1,6 +1,6 @@
 {
   "name": "beide",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "beide — desktop IDE with AI agent (made in Belarus)",
   "type": "module",
   "main": "./out/main/index.js",

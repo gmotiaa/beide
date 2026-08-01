@@ -13,7 +13,7 @@ export interface ProviderStatus {
 }
 export type PermissionMode = "ask" | "auto";
 export type ThemeId = "dark" | "light" | "midnight";
-export type LanguageId = "ru" | "en";
+export type LanguageId = "ru" | "en" | "be";
 
 export interface BeideSettings {
   language: LanguageId;
@@ -135,7 +135,7 @@ export interface BeideApi {
     respondPermission: (id: string, allow: boolean, content?: string) => Promise<void>;
     getStatus: () => Promise<{ ready: boolean; streaming: boolean; mode: AgentMode; model?: string }>;
     getProviders: () => Promise<ProviderStatus[]>;
-    installProviderKey: (ciphertext: string) => Promise<{ ok: boolean; error?: string }>;
+    setAccessToken: (token: string) => Promise<{ ok: boolean }>;
     health: () => Promise<{ ok: boolean; latencyMs: number | null }>;
   };
   ai: {
@@ -186,10 +186,11 @@ export interface BeideApi {
     run: (command: string) => Promise<{ code: number; stdout: string; stderr: string }>;
   };
   terminal: {
-    create: (cols: number, rows: number) => Promise<{ id: string }>;
+    create: (cols: number, rows: number, shellId?: string) => Promise<{ id: string }>;
     write: (id: string, data: string) => Promise<{ ok: boolean }>;
     resize: (id: string, cols: number, rows: number) => Promise<{ ok: boolean }>;
     kill: (id: string) => Promise<{ ok: boolean }>;
+    shells: () => Promise<Array<{ id: string; label: string; path: string }>>;
   };
   window: {
     minimize: () => Promise<void>;

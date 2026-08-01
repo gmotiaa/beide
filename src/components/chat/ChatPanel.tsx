@@ -4,16 +4,27 @@ import type { ChatStatus, UIMessage } from "ai";
 import {
   IconBulb,
   IconCode,
+  IconFile,
+  IconFileText,
   IconFolder,
+  IconPhoto,
   IconPlus,
   IconRobot,
   IconSearch,
   IconTerminal2,
 } from "@tabler/icons-react";
 import { getTerminalSnapshot } from "../../lib/terminal-buffer";
+import {
+  loadPromptLibrary,
+  type PromptTemplate,
+} from "../../lib/prompt-library";
 
 import { MessageList } from "../agent-elements/message-list";
-import { InputBar } from "../agent-elements/input-bar";
+import {
+  InputBar,
+  type ComposerMenuItem,
+  type ComposerMenuSource,
+} from "../agent-elements/input-bar";
 import { ModeSelector } from "../agent-elements/input/mode-selector";
 import { ModelPicker } from "../agent-elements/input/model-picker";
 import { Suggestions, type SuggestionItem } from "../agent-elements/input/suggestions";
@@ -78,6 +89,14 @@ function modelLabelFor(model?: string): string | null {
   return found ? `${found.name} ${found.version}` : model;
 }
 
+/** Workspace paths arrive with either separator — take the last segment. */
+function basename(path: string): string {
+  return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
+}
+
+/** Cap on file rows in the "@" menu; specials come on top of these. */
+const MENTION_FILE_LIMIT = 8;
+
 export function ChatPanel() {
   const { t } = useTranslation();
   const mode = useAgentStore((s) => s.mode);
@@ -99,6 +118,7 @@ export function ChatPanel() {
   const images = useChatStore((s) => s.images);
   const addImage = useChatStore((s) => s.addImage);
   const removeImage = useChatStore((s) => s.removeImage);
+  const mentions = useChatStore((s) => s.mentions);
   const newSession = useChatStore((s) => s.newSession);
   const setError = useChatStore((s) => s.setError);
   const refreshSessions = useChatStore((s) => s.refreshSessions);
@@ -146,7 +166,110 @@ export function ChatPanel() {
         value: t("chat.suggestions.code.value"),
         icon: <IconCode className="h-3.5 w-3.5" aria-hidden />,
       },
+      {
+        id: "layout",
+        label: t("chat.suggestions.layout.label"),
+        value: t("chat.suggestions.layout.value"),
+        icon: <IconPhoto className="h-3.5 w-3.5" aria-hidden />,
+      },
     ],
+    [t],
+  );
+
+  // ---- "@" mention menu ----------------------------------------------------
+  const mentionMenu = useMemo<ComposerMenuSource>(
+    () => ({
+      getItems: async (query) => {
+        const q = query.trim().toLowerCase();
+        const items: ComposerMenuItem[] = [];
+        // Special targets first, filtered by name prefix like the files are.
+        if (!q || "terminal".startsWith(q)) {
+          items.push({
+            id: "special:terminal",
+            label: "@terminal",
+            hint: t("chat.attachTerminal"),
+            icon: <IconTerminal2 className="size-3.5" stroke={1.75} aria-hidden />,
+          });
+        }
+        if (!q || "codebase".startsWith(q)) {
+          items.push({
+            id: "special:codebase",
+            label: "@codebase",
+            hint: t("chat.mentionCodebase"),
+            icon: <IconSearch className="size-3.5" stroke={1.75} aria-hidden />,
+          });
+        }
+        if (q.length >= 1) {
+          const files = await useWorkspaceStore.getState().searchFiles(q);
+          for (const path of files.slice(0, MENTION_FILE_LIMIT)) {
+            items.push({
+              id: `file:${path}`,
+              label: basename(path),
+              hint: path,
+              icon: <IconFile className="size-3.5" stroke={1.75} aria-hidden />,
+            });
+          }
+        }
+        return items;
+      },
+      onSelect: (item) => {
+        if (item.id === "special:terminal") {
+          const chat = useChatStore.getState();
+          const snapshot = getTerminalSnapshot();
+          if (!snapshot.trim()) {
+            chat.setError(t("chat.attachTerminalEmpty"));
+            return ""; // drop the "@…" token, nothing to attach
+          }
+          return `\n\`\`\`terminal\n${snapshot}\n\`\`\`\n`;
+        }
+        if (item.id === "special:codebase") {
+          // Left in the draft on purpose: the user types the query inline and
+          // main resolves "@codebase <query>" into content-search results.
+          return "@codebase ";
+        }
+        if (item.id.startsWith("file:")) {
+          const path = item.id.slice("file:".length);
+          useChatStore
+            .getState()
+            .addMention({ type: "file", path, name: basename(path) });
+          return ""; // the mention chip replaces the typed token
+        }
+        return null;
+      },
+    }),
+    [t],
+  );
+
+  // ---- "/" prompt library menu ----------------------------------------------
+  // onSelect is synchronous, so the templates from the latest getItems() call
+  // are kept here for the content lookup.
+  const promptsRef = useRef<PromptTemplate[]>([]);
+  const promptMenu = useMemo<ComposerMenuSource>(
+    () => ({
+      getItems: async (query) => {
+        const prompts = await loadPromptLibrary();
+        promptsRef.current = prompts;
+        if (prompts.length === 0) {
+          return [
+            { id: "prompts:empty", label: t("chat.promptsEmpty"), disabled: true },
+          ];
+        }
+        const q = query.trim().toLowerCase();
+        return prompts
+          .filter((prompt) => !q || prompt.name.toLowerCase().includes(q))
+          .map((prompt) => ({
+            id: `prompt:${prompt.name}`,
+            label: `/${prompt.name}`,
+            icon: <IconFileText className="size-3.5" stroke={1.75} aria-hidden />,
+          }));
+      },
+      onSelect: (item) => {
+        if (!item.id.startsWith("prompt:")) return null;
+        const name = item.id.slice("prompt:".length);
+        const found = promptsRef.current.find((prompt) => prompt.name === name);
+        return found ? found.content : null;
+      },
+    }),
     [t],
   );
 
@@ -227,6 +350,19 @@ export function ChatPanel() {
         url: `data:${img.mimeType};base64,${img.data}`,
       })),
     [images, t],
+  );
+
+  // Store mentions had no composer presence at all — a file picked in the "@"
+  // menu was sent with the prompt but never shown. Surface them as the same
+  // chips the composer already draws for attachments. (The store only offers
+  // addMention/clearMentions, so the chips carry no per-item remove button.)
+  const attachedMentionFiles = useMemo(
+    () =>
+      mentions.map((mention) => ({
+        id: `mention:${mention.path}`,
+        filename: mention.name,
+      })),
+    [mentions],
   );
 
   const onSend = useCallback(
@@ -488,6 +624,9 @@ export function ChatPanel() {
               disabled={!canSend}
               onAttach={supportsImages ? onAttach : undefined}
               attachedImages={attachedImages}
+              attachedFiles={attachedMentionFiles}
+              mentionMenu={mentionMenu}
+              promptMenu={promptMenu}
               onRemoveImage={(id) => {
                 const idx = Number(String(id).replace("img-", ""));
                 if (!Number.isNaN(idx)) removeImage(idx);
@@ -512,27 +651,7 @@ export function ChatPanel() {
                     value={model || DEFAULT_MODEL_ID}
                     onChange={(selectedId) => void setModel(selectedId)}
                   />
-                  <button
-                    type="button"
-                    title={t("chat.attachTerminal")}
-                    aria-label={t("chat.attachTerminal")}
-                    className="inline-flex h-7 items-center gap-1 rounded-[6px] px-2 text-[12px] leading-4 text-foreground/40 transition-colors hover:bg-foreground/6 cursor-pointer"
-                    onClick={() => {
-                      const snapshot = getTerminalSnapshot();
-                      const chat = useChatStore.getState();
-                      if (!snapshot.trim()) {
-                        chat.setError(t("chat.attachTerminalEmpty"));
-                        return;
-                      }
-                      chat.setDraft(
-                        `${chat.draft.trimEnd()}\n\n\`\`\`terminal\n${snapshot}\n\`\`\`\n`.trimStart(),
-                      );
-                      document.getElementById("chat-composer")?.focus();
-                    }}
-                  >
-                    <IconTerminal2 className="size-3.5" stroke={1.75} />
-                    <span>@terminal</span>
-                  </button>
+                  {/* The "@terminal" button moved into the "@" mention menu. */}
                 </div>
               }
               className="beide-agent-input"

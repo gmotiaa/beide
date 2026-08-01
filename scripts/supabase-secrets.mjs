@@ -13,7 +13,12 @@ import { createCipheriv, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// Must match APP_KEY_HEX in electron/services/provider-key.ts.
+// LEGACY: the app now reaches models through the model-proxy Edge Function
+// and no longer decrypts this ciphertext (provider-key.ts was removed). Kept
+// only to (re)publish model_credentials for older builds. For the proxy,
+// rotate the key with:
+//   update public.app_config set value = to_jsonb('<new-key>'::text)
+//     where key = 'echogate_api_key';
 const BEIDE_PROVIDER_KEY_HEX =
   "5c662bc7e788be2d91984423254a834fa2d74f6e1edfee8e6146457721817c84";
 

@@ -23,6 +23,7 @@ import {
 import { useAuthStore } from "../../stores/auth";
 import { useUsageStore } from "../../stores/usage";
 import { cn } from "../../lib/utils";
+import type { UsageHistoryDay } from "../../lib/supabase-billing";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Progress } from "../ui/progress";
@@ -30,8 +31,36 @@ import { Separator } from "../ui/separator";
 import { formatTokens } from "./helpers";
 import { ChoiceGroup, Field, Panel, useNow } from "./parts";
 
+/** Range shown by the history mini-chart — also the `p_days` sent to the RPC. */
+const HISTORY_DAYS = 30;
+/** Non-zero bars never shrink below this so a single-token day stays visible. */
+const MIN_BAR_PCT = 8;
+
 function localeOf(lang?: string): string {
   return lang?.startsWith("ru") ? "ru-RU" : "en-US";
+}
+
+/** `YYYY-MM-DD` in UTC — matches the `date::text` cast `get_usage_history` returns. */
+function isoDate(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * `get_usage_history` only emits days that had a `spend` event, so a quiet
+ * day is simply absent from the row set. Fill the gaps back in — the chart
+ * needs one bar per calendar day, zero-token days included.
+ */
+function padHistory(rows: UsageHistoryDay[], days: number): UsageHistoryDay[] {
+  const byDay = new Map(rows.map((r) => [r.day, r]));
+  const today = new Date();
+  const out: UsageHistoryDay[] = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(today);
+    d.setUTCDate(d.getUTCDate() - i);
+    const key = isoDate(d);
+    out.push(byDay.get(key) ?? { day: key, tokens: 0, creditsUsed: 0, calls: 0 });
+  }
+  return out;
 }
 
 /** One quota window: % left, absolute usage, bar, reset moment. */
@@ -82,11 +111,15 @@ function Meter({
   );
 }
 
-/** Last-N-days token spend. Only the cloud keeps this ledger. */
-function HistoryStrip({ data }: { data: { day: string; tokens: number }[] }) {
+/** Last-N-days token spend, as a mini bar chart. Only the cloud keeps this ledger. */
+function HistoryStrip({ data: rows }: { data: UsageHistoryDay[] }) {
   const { t, i18n } = useTranslation();
-  const peak = Math.max(1, ...data.map((d) => d.tokens));
-  const total = data.reduce((sum, d) => sum + d.tokens, 0);
+
+  const data = useMemo(() => padHistory(rows, HISTORY_DAYS), [rows]);
+  const peakTokens = useMemo(() => Math.max(0, ...data.map((d) => d.tokens)), [data]);
+  const chartPeak = Math.max(1, peakTokens);
+  const total = useMemo(() => data.reduce((sum, d) => sum + d.tokens, 0), [data]);
+
   const fmtDay = (iso: string) => {
     const d = new Date(iso);
     return Number.isNaN(d.getTime())
@@ -100,22 +133,40 @@ function HistoryStrip({ data }: { data: { day: string; tokens: number }[] }) {
   return (
     <div className="usage-history">
       <div className="usage-history__head">
-        <span>{t("settings.history")}</span>
-        <span className="tabular-nums">{formatTokens(total)} tok</span>
+        <span>
+          {t("settings.usageRangeTotal", {
+            tokens: `${formatTokens(total)} tok`,
+            days: data.length,
+          })}
+        </span>
+        <span className="tabular-nums">
+          {t("settings.usageMaxDay", { tokens: `${formatTokens(peakTokens)} tok` })}
+        </span>
       </div>
       <div className="usage-history__bars">
-        {data.map((d) => (
-          <div
-            key={d.day}
-            className="usage-history__bar"
-            title={`${fmtDay(d.day)} · ${formatTokens(d.tokens)} tok`}
-          >
-            <span
-              className="usage-history__fill"
-              style={{ height: `${Math.max(3, (d.tokens / peak) * 100)}%` }}
-            />
-          </div>
-        ))}
+        {data.map((d, i) => {
+          const isZero = d.tokens <= 0;
+          const isToday = i === data.length - 1;
+          const pct = Math.min(100, Math.max(MIN_BAR_PCT, (d.tokens / chartPeak) * 100));
+          return (
+            <div
+              key={d.day}
+              className={cn("usage-history__bar", isToday && "usage-history__bar--today")}
+              aria-label={`${fmtDay(d.day)}: ${formatTokens(d.tokens)} tok`}
+            >
+              <span
+                className={cn("usage-history__fill", isZero && "usage-history__fill--zero")}
+                style={isZero ? undefined : { height: `${pct}%` }}
+              />
+              <div className="usage-history__tooltip" role="tooltip">
+                <div className="usage-history__tooltip-date">{fmtDay(d.day)}</div>
+                <div className="usage-history__tooltip-meta tabular-nums">
+                  {formatTokens(d.tokens)} tok · {t("settings.usageDayCalls", { count: d.calls })}
+                </div>
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -141,7 +192,7 @@ export function UsageSection() {
   const now = useNow(30_000);
 
   useEffect(() => {
-    void loadHistory();
+    void loadHistory(HISTORY_DAYS);
   }, [loadHistory, source]);
 
   // The DB row is the authority; PLANS is only the offline mirror.
@@ -177,7 +228,7 @@ export function UsageSection() {
             disabled={busy || historyLoading}
             onClick={() => {
               void load();
-              void loadHistory();
+              void loadHistory(HISTORY_DAYS);
             }}
             aria-label={t("settings.refresh")}
           >

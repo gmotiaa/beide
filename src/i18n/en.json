@@ -121,6 +121,16 @@
     "commitFailed": "Commit failed",
     "aiFailed": "Could not generate a commit message"
   },
+  "preview": {
+    "title": "Preview",
+    "urlLabel": "Dev server URL",
+    "urlPlaceholder": "http://localhost:3000",
+    "go": "Go",
+    "reload": "Reload",
+    "invalidUrl": "Only http(s) URLs on localhost or 127.0.0.1 are allowed",
+    "notLoadedHint": "The page did not load. Is the server running? Check the URL and that your dev server is up.",
+    "frameTitle": "Preview frame"
+  },
   "chat": {
     "title": "Agent",
     "providerRetry": "Provider not responding — attempt {{attempt}} of {{max}}…",
@@ -136,6 +146,8 @@
     "attachImage": "Attach image",
     "attachTerminal": "Attach terminal output",
     "attachTerminalEmpty": "The terminal is empty or not open — nothing to attach.",
+    "mentionCodebase": "Search the codebase",
+    "promptsEmpty": "No prompts — create .beide/prompts/*.md",
     "streaming": "Thinking…",
     "emptyTitle": "How can I help?",
     "emptyBody": "Describe a task. Plan mode only explores; Agent mode can apply edits.",
@@ -184,6 +196,10 @@
       "code": {
         "label": "Explain the code",
         "value": "Read the open file and briefly describe its purpose and problems."
+      },
+      "layout": {
+        "label": "Build from mockup",
+        "value": "Build the interface from the attached screenshot: markup + styles matching the project stack."
       }
     }
   },
@@ -209,6 +225,7 @@
     "language": "Interface language",
     "languageRu": "Русский",
     "languageEn": "English",
+    "languageBe": "Беларуская",
     "agent": "Agent",
     "permissionMode": "Permission mode",
     "permissionAsk": "Ask",
@@ -302,6 +319,12 @@
     "demoTools": "Debug tools",
     "demoToolsHint": "Available while the counters are local or the project runs in demo mode.",
     "history": "Spend, last 14 days",
+    "usageRangeTotal": "Σ {{tokens}} · {{days}}d",
+    "usageMaxDay": "peak {{tokens}}",
+    "usageDayCalls_one": "{{count}} call",
+    "usageDayCalls_few": "{{count}} calls",
+    "usageDayCalls_many": "{{count}} calls",
+    "usageDayCalls_other": "{{count}} calls",
     "defaultModeHint": "Which mode a new chat starts in",
     "modelLabelHint": "A display label only — it does not change the model the agent uses",
     "resetSettings": "Reset settings",
@@ -314,7 +337,8 @@
     "noWorkspace": "Open a folder to run commands in its root",
     "exited": "Process exited (code {{code}}). Press any key to start a new shell.",
     "newTab": "New terminal",
-    "closeTab": "Close terminal"
+    "closeTab": "Close terminal",
+    "shell": "Shell"
   },
   "auth": {
     "notConfigured": "Supabase is not configured. Add VITE_SUPABASE_* to .env",

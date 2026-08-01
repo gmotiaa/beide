@@ -393,10 +393,10 @@ export function registerIpc(
 
   rehandle("agent:getProviders", async () => svc().agent.getProviders());
 
-  rehandle("agent:installProviderKey", async (_e, ciphertext: unknown) => {
-    // base64(iv || key || tag) — provider keys are short; 8 KiB is generous.
-    const blob = asString(ciphertext, "ciphertext", 8192);
-    return svc().agent.installEncryptedProviderKey(blob);
+  rehandle("agent:setAccessToken", async (_e, token: unknown) => {
+    // Supabase JWTs are ~1 KiB; 16 KiB leaves headroom for future claims.
+    const t = asString(token ?? "", "token", 16_384);
+    return svc().agent.setAccessToken(t);
   });
 
   rehandle("agent:health", async () => svc().agent.probeGateway());
@@ -598,11 +598,16 @@ export function registerIpc(
   // side) — there is no local counter backend anymore.
 
   // ── Terminal (PTY) ───────────────────────────────────────
-  rehandle("terminal:create", async (_e, cols: unknown, rows: unknown) => {
+  rehandle("terminal:create", async (_e, cols: unknown, rows: unknown, shellId?: unknown) => {
     const root = svc().workspace.getRoot();
     if (!root) throw new IpcError("No workspace open", "NO_WORKSPACE");
-    return svc().terminal.create(root, Number(cols), Number(rows));
+    // shellId is an allowlist key, not a path; TerminalService resolves it
+    // against listShells() and falls back to the default entry.
+    const shell = asOptionalString(shellId, "shellId", 32);
+    return svc().terminal.create(root, Number(cols), Number(rows), shell);
   });
+
+  rehandle("terminal:shells", async () => svc().terminal.listShells());
 
   rehandle("terminal:write", async (_e, id: unknown, data: unknown) => {
     svc().terminal.write(asString(id, "id", 64), asString(data, "data", 8192));

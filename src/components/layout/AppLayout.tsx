@@ -17,6 +17,7 @@ import { GitPanel } from "../git/GitPanel";
 import { ChatPanel } from "../chat/ChatPanel";
 import { DiffModal } from "../diff/DiffModal";
 import { SettingsView } from "../settings/SettingsView";
+import { PreviewPanel } from "../preview/PreviewPanel";
 import { TerminalPanel } from "../terminal/TerminalPanel";
 import { Resizer } from "../common/Resizer";
 import { useWorkspaceStore } from "../../stores/workspace";
@@ -197,6 +198,7 @@ export function AppLayout() {
   };
 
   const showSettings = activity === "settings";
+  const showPreview = activity === "preview";
 
   return (
     <div
@@ -250,6 +252,8 @@ export function AppLayout() {
           <div className="app-center">
             {showSettings ? (
               <SettingsView />
+            ) : showPreview ? (
+              <PreviewPanel />
             ) : (
               <Suspense fallback={<div className="app-boot" />}>
                 <EditorArea />

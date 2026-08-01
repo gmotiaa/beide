@@ -8,7 +8,6 @@ import { useAgentStore } from "./stores/agent";
 import { useAuthStore } from "./stores/auth";
 import { useSettingsStore } from "./stores/settings";
 import { useUsageStore } from "./stores/usage";
-import { deliverProviderKey } from "./lib/provider-key";
 
 export default function App() {
   const hydrated = useOnboardingStore((s) => s.hydrated);
@@ -34,13 +33,12 @@ export default function App() {
     })();
   }, [hydrateOnboarding, loadSettings, initAuth, loadUsage]);
 
-  // The provider key lives in Supabase (encrypted) and is delivered once a
-  // session exists — main decrypts and arms the model runtime in memory.
+  // Models are reached through the Supabase model-proxy: the auth store
+  // pushes the JWT to main on every auth change; here we only refresh the
+  // provider badge once a session exists.
   useEffect(() => {
     if (!session) return;
-    void deliverProviderKey().then((ok) => {
-      if (ok) void useAgentStore.getState().refreshProviders();
-    });
+    void useAgentStore.getState().refreshProviders();
   }, [session]);
 
   if (!hydrated) {

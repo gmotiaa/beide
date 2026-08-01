@@ -35,15 +35,15 @@ export const PLANS: Record<UsagePlanId, PlanLimits> = {
   free: {
     id: "free",
     label: "Free",
-    tokens5h: 25_000,
-    tokensWeek: 100_000,
+    tokens5h: 20_000,
+    tokensWeek: 80_000,
     credits: 0,
   },
   pro: {
     id: "pro",
     label: "Pro",
-    tokens5h: 200_000,
-    tokensWeek: 1_000_000,
+    tokens5h: 150_000,
+    tokensWeek: 750_000,
     credits: 0,
   },
 };

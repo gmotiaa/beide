@@ -18,7 +18,9 @@ function sanitizeSettings(value: unknown): Partial<BeideSettings> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   const input = value as Record<string, unknown>;
   const out: Partial<BeideSettings> = {};
-  if (input.language === "ru" || input.language === "en") out.language = input.language;
+  if (input.language === "ru" || input.language === "en" || input.language === "be") {
+    out.language = input.language;
+  }
   if (input.theme === "dark" || input.theme === "light" || input.theme === "midnight") {
     out.theme = input.theme;
   }

@@ -25,6 +25,13 @@ import { FileAttachment } from "./input/file-attachment";
 import { useInputTyping } from "./input/input-typing";
 import { QuestionPrompt } from "./question/question-prompt";
 import { Suggestions, type SuggestionItem } from "./input/suggestions";
+import {
+  ComposerMenu,
+  type ComposerMenuItem,
+  type ComposerMenuSource,
+} from "./input/composer-menu";
+
+export type { ComposerMenuItem, ComposerMenuSource } from "./input/composer-menu";
 import type {
   QuestionAnswer,
   QuestionConfig,
@@ -119,7 +126,57 @@ export type InputBarProps = {
   leftActions?: React.ReactNode;
   /** Content rendered on the right of the toolbar, before the send button. */
   rightActions?: React.ReactNode;
+
+  /**
+   * "@" mention menu: opens when the caret sits in an "@…" token typed at a
+   * word boundary; the query is the text after "@".
+   */
+  mentionMenu?: ComposerMenuSource;
+  /**
+   * "/" prompt menu: opens while the whole draft starts with "/"; the query is
+   * everything after it. Selection replaces the entire draft.
+   */
+  promptMenu?: ComposerMenuSource;
 };
+
+type MenuToken = {
+  kind: "mention" | "prompt";
+  query: string;
+  /** Character range of the trigger token inside the draft. */
+  start: number;
+  end: number;
+};
+
+/**
+ * The token under the caret that should open a composer menu, or null.
+ * "@" opens the mention menu at any word boundary; "/" opens the prompt menu
+ * only as the very first character of the draft.
+ */
+function findMenuToken(
+  value: string,
+  caret: number,
+  hasMention: boolean,
+  hasPrompt: boolean,
+): MenuToken | null {
+  if (hasMention) {
+    const before = value.slice(0, caret);
+    // Non-ASCII filenames are legal — the token is "anything but whitespace".
+    const match = /(^|\s)@([^\s@]*)$/.exec(before);
+    if (match) {
+      const start = match.index + match[1]!.length;
+      return { kind: "mention", query: match[2] ?? "", start, end: caret };
+    }
+  }
+  if (hasPrompt && value.startsWith("/")) {
+    return { kind: "prompt", query: value.slice(1), start: 0, end: value.length };
+  }
+  return null;
+}
+
+/** How long a keystroke may keep refreshing menu items (file search debounce). */
+const MENU_QUERY_DEBOUNCE_MS = 150;
+/** Blur must not close the menu before a click on it lands. */
+const MENU_BLUR_CLOSE_MS = 150;
 
 export const InputBar = memo(function InputBar({
   onSend,
@@ -146,6 +203,8 @@ export const InputBar = memo(function InputBar({
   questionBar,
   leftActions,
   rightActions,
+  mentionMenu,
+  promptMenu,
 }: InputBarProps) {
   const { t } = useTranslation();
   const [internalInput, setInternalInput] = useState("");
@@ -168,6 +227,144 @@ export const InputBar = memo(function InputBar({
   );
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const config = DEFAULT_INPUT_CONFIG;
+
+  // ---- "@" mention / "/" prompt menu -------------------------------------
+  const [menuToken, setMenuToken] = useState<MenuToken | null>(null);
+  const [menuItems, setMenuItems] = useState<ComposerMenuItem[]>([]);
+  const [menuIndex, setMenuIndex] = useState(0);
+  /** `${kind}:${start}` of a token dismissed with Escape — stays closed until the caret leaves it. */
+  const menuDismissedRef = useRef<string | null>(null);
+  /** Monotonic id so a slow getItems() cannot overwrite a newer query's results. */
+  const menuRequestRef = useRef(0);
+  const menuBlurTimerRef = useRef<number | null>(null);
+
+  const closeMenu = useCallback(
+    (dismissToken?: MenuToken | null) => {
+      if (dismissToken) {
+        menuDismissedRef.current = `${dismissToken.kind}:${dismissToken.start}`;
+      }
+      menuRequestRef.current += 1;
+      setMenuToken(null);
+      setMenuItems([]);
+      setMenuIndex(0);
+    },
+    [],
+  );
+
+  /** Re-derive the menu token from the live caret position. */
+  const syncMenu = useCallback(() => {
+    const el = textareaRef.current;
+    if (!el || (!mentionMenu && !promptMenu)) return;
+    const caret = el.selectionStart ?? el.value.length;
+    const token = findMenuToken(
+      el.value,
+      caret,
+      Boolean(mentionMenu),
+      Boolean(promptMenu),
+    );
+    if (!token) {
+      menuDismissedRef.current = null;
+      setMenuToken(null);
+      return;
+    }
+    if (menuDismissedRef.current === `${token.kind}:${token.start}`) {
+      setMenuToken(null);
+      return;
+    }
+    setMenuToken(token);
+  }, [mentionMenu, promptMenu]);
+
+  // Fetch items when the token (and its query) changes. Non-empty queries are
+  // debounced so the host's file search does not run on every keystroke.
+  useEffect(() => {
+    if (!menuToken) {
+      // Closed via caret movement — items from the previous open must not
+      // flash when the menu reopens before the new fetch resolves.
+      setMenuItems([]);
+      return;
+    }
+    const source = menuToken.kind === "mention" ? mentionMenu : promptMenu;
+    if (!source) return;
+    const request = ++menuRequestRef.current;
+    const run = () => {
+      void Promise.resolve(source.getItems(menuToken.query))
+        .then((items) => {
+          if (menuRequestRef.current !== request) return;
+          setMenuItems(items);
+          setMenuIndex(items.findIndex((item) => !item.disabled));
+        })
+        .catch(() => {
+          if (menuRequestRef.current === request) setMenuItems([]);
+        });
+    };
+    const timer = window.setTimeout(
+      run,
+      menuToken.query ? MENU_QUERY_DEBOUNCE_MS : 0,
+    );
+    return () => window.clearTimeout(timer);
+  }, [menuToken, mentionMenu, promptMenu]);
+
+  // The draft can change without a textarea event (send clears it, a
+  // suggestion replaces it) — a token pointing past the end is stale.
+  useEffect(() => {
+    if (menuToken && menuToken.end > input.length) closeMenu();
+  }, [input, menuToken, closeMenu]);
+
+  useEffect(() => {
+    return () => {
+      if (menuBlurTimerRef.current !== null) {
+        window.clearTimeout(menuBlurTimerRef.current);
+      }
+    };
+  }, []);
+
+  const handleMenuSelect = useCallback(
+    (item: ComposerMenuItem) => {
+      if (!menuToken || item.disabled) return;
+      const source = menuToken.kind === "mention" ? mentionMenu : promptMenu;
+      if (!source) return;
+      const replacement = source.onSelect(item, menuToken.query);
+      const token = menuToken;
+      closeMenu();
+      if (replacement === null) {
+        textareaRef.current?.focus();
+        return;
+      }
+      const next =
+        input.slice(0, token.start) + replacement + input.slice(token.end);
+      setInput(next);
+      const caret = token.start + replacement.length;
+      requestAnimationFrame(() => {
+        const el = textareaRef.current;
+        if (!el) return;
+        el.focus();
+        el.setSelectionRange(caret, caret);
+      });
+    },
+    [menuToken, mentionMenu, promptMenu, closeMenu, input, setInput],
+  );
+
+  const isMenuOpen = menuToken !== null && menuItems.length > 0;
+  const menuHasSelectable = menuItems.some((item) => !item.disabled);
+
+  const moveMenuIndex = useCallback(
+    (delta: 1 | -1) => {
+      setMenuIndex((prev) => {
+        const enabled = menuItems
+          .map((item, index) => (item.disabled ? -1 : index))
+          .filter((index) => index >= 0);
+        if (enabled.length === 0) return prev;
+        const at = enabled.indexOf(prev);
+        const next =
+          at === -1
+            ? enabled[0]!
+            : enabled[(at + delta + enabled.length) % enabled.length]!;
+        return next;
+      });
+    },
+    [menuItems],
+  );
+  // -------------------------------------------------------------------------
 
   const isStreaming = status === "streaming" || status === "submitted";
   const isTyping = typingAnimation?.isActive ?? false;
@@ -387,12 +584,49 @@ export const InputBar = memo(function InputBar({
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
+      // Menu navigation runs BEFORE send-on-Enter: while the menu is open,
+      // Enter picks the highlighted item instead of sending the draft.
+      if (isMenuOpen) {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          closeMenu(menuToken);
+          return;
+        }
+        if (menuHasSelectable) {
+          if (e.key === "ArrowDown") {
+            e.preventDefault();
+            moveMenuIndex(1);
+            return;
+          }
+          if (e.key === "ArrowUp") {
+            e.preventDefault();
+            moveMenuIndex(-1);
+            return;
+          }
+          if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            const item = menuItems[menuIndex];
+            if (item && !item.disabled) handleMenuSelect(item);
+            return;
+          }
+        }
+      }
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         handleSubmit();
       }
     },
-    [handleSubmit],
+    [
+      handleSubmit,
+      isMenuOpen,
+      menuHasSelectable,
+      menuItems,
+      menuIndex,
+      menuToken,
+      closeMenu,
+      moveMenuIndex,
+      handleMenuSelect,
+    ],
   );
 
   const hasInput = input.trim().length > 0;
@@ -456,6 +690,16 @@ export const InputBar = memo(function InputBar({
             )}
             onClick={handleContainerClick}
           >
+            {/* "@" mention / "/" prompt menu, floating above the input */}
+            {isMenuOpen && (
+              <ComposerMenu
+                items={menuItems}
+                activeIndex={menuIndex}
+                onSelect={handleMenuSelect}
+                onHover={setMenuIndex}
+              />
+            )}
+
             {/* Context items (attached images/files) */}
             <div
               className={cn(
@@ -525,7 +769,26 @@ export const InputBar = memo(function InputBar({
                     ref={textareaRef}
                     id={textareaId}
                     value={input}
-                    onChange={(e) => setInput(e.target.value)}
+                    onChange={(e) => {
+                      setInput(e.target.value);
+                      syncMenu();
+                    }}
+                    // Fires on any caret move (arrows, clicks) — the menu must
+                    // track the token under the caret, not just typed text.
+                    onSelect={syncMenu}
+                    onFocus={() => {
+                      if (menuBlurTimerRef.current !== null) {
+                        window.clearTimeout(menuBlurTimerRef.current);
+                        menuBlurTimerRef.current = null;
+                      }
+                    }}
+                    onBlur={() => {
+                      // Delayed so a click on a menu item lands first.
+                      menuBlurTimerRef.current = window.setTimeout(() => {
+                        menuBlurTimerRef.current = null;
+                        closeMenu();
+                      }, MENU_BLUR_CLOSE_MS);
+                    }}
                     onKeyDown={handleKeyDown}
                     onPaste={onPaste}
                     placeholder={effectivePlaceholder}

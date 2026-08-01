@@ -329,7 +329,7 @@ export function Onboarding() {
                     <div className="text-sm font-medium">
                       {t("settings.language")}
                     </div>
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="grid grid-cols-3 gap-2">
                       <ChoicePill
                         active={settings.language === "ru"}
                         onClick={() =>
@@ -345,6 +345,14 @@ export function Onboarding() {
                         }
                       >
                         {t("settings.languageEn")}
+                      </ChoicePill>
+                      <ChoicePill
+                        active={settings.language === "be"}
+                        onClick={() =>
+                          void updateSettings({ language: "be" as LanguageId })
+                        }
+                      >
+                        {t("settings.languageBe")}
                       </ChoicePill>
                     </div>
                   </div>

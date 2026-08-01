@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { Session, User } from "@supabase/supabase-js";
 import i18n from "../i18n";
+import { getBeide } from "../lib/ipc";
 import { getSupabase, isSupabaseConfigured } from "../lib/supabase";
 import { useUsageStore } from "./usage";
 
@@ -65,9 +66,13 @@ export const useAuthStore = create<AuthState>((set) => ({
         session: data.session,
         user: data.session?.user ?? null,
       });
+      // The model proxy authenticates with the user's JWT — main needs it
+      // (and every auto-refreshed successor) to talk to the models.
+      void getBeide()?.agent.setAccessToken(data.session?.access_token ?? "");
       const { data: listener } = sb.auth.onAuthStateChange((_event, session) => {
         if (!isCurrent()) return;
         set({ session, user: session?.user ?? null });
+        void getBeide()?.agent.setAccessToken(session?.access_token ?? "");
         // Reload billing when auth changes (subscription lives in Supabase)
         void useUsageStore.getState().load(Boolean(session));
       });

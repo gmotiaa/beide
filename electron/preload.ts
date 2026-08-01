@@ -54,8 +54,7 @@ const api: BeideApi = {
       invoke("agent:respondPermission", id, allow, content),
     getStatus: () => invoke("agent:getStatus"),
     getProviders: () => invoke("agent:getProviders"),
-    installProviderKey: (ciphertext: string) =>
-      invoke("agent:installProviderKey", ciphertext),
+    setAccessToken: (token: string) => invoke("agent:setAccessToken", token),
     health: () => invoke("agent:health"),
   },
   checkpoint: {
@@ -103,11 +102,13 @@ const api: BeideApi = {
     setDirty: (dirty: boolean) => invoke("window:setDirty", dirty),
   },
   terminal: {
-    create: (cols: number, rows: number) => invoke("terminal:create", cols, rows),
+    create: (cols: number, rows: number, shellId?: string) =>
+      invoke("terminal:create", cols, rows, shellId),
     write: (id: string, data: string) => invoke("terminal:write", id, data),
     resize: (id: string, cols: number, rows: number) =>
       invoke("terminal:resize", id, cols, rows),
     kill: (id: string) => invoke("terminal:kill", id),
+    shells: () => invoke("terminal:shells"),
   },
   on: (channel: string, listener: (...args: unknown[]) => void) => {
     if (!ALLOWED_EVENTS.has(channel)) {

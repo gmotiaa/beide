@@ -182,3 +182,41 @@ both are covered by `npm test`.
 * Recursive `fs.watch` is best-effort on Windows.
 * Long-running providers need generous HTTP timeouts — `undici`'s global
   dispatcher is configured once in `agent.ts` (60 s connect, 300 s body).
+
+## MCP servers
+
+Users can plug external MCP servers into the agent via
+`<workspace>/.beide/mcp.json`:
+
+```json
+{
+  "servers": {
+    "everything": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-everything"],
+      "env": { "SOME_KEY": "value" }
+    }
+  }
+}
+```
+
+A missing or invalid file simply means no servers. Server names must match
+`/^[a-z0-9_-]{1,32}$/i`; `command` is a non-empty string, `args` an array of
+strings. `electron/services/mcp.ts` (`McpManager`, hand-rolled client — no SDK
+dependency) spawns each server with `shell: false` over stdio
+(newline-delimited JSON-RPC 2.0), does the MCP handshake
+(`initialize` → `notifications/initialized` → `tools/list`, 15 s per request)
+and kills/skips any server that fails it (console warning only). On Windows,
+`shell: false` means `.cmd` shims are not directly spawnable — wrap them:
+`"command": "cmd", "args": ["/c", "npx", "-y", "…"]`.
+
+Each MCP tool is exposed to pi as a custom tool named
+`mcp_<server>_<toolname>` (sanitized to `[a-z0-9_]`, `_2` suffix on
+collision), available in **both** modes; results are the concatenated text
+content items (`isError` throws back into the agent loop, 60 s call timeout).
+
+Env hygiene: the child env is `stripSecretEnv(process.env)` plus the
+server's own `env` block — provider keys and anything matching the secret
+patterns never reach an MCP server. Servers are workspace-scoped: they start
+lazily with the first session in a workspace, survive mode/model changes, and
+are stopped on workspace switch and app shutdown.

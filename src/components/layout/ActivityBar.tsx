@@ -1,7 +1,19 @@
 import { useTranslation } from "react-i18next";
 import { Icons } from "../common/IconButton";
 
-export type ActivityId = "files" | "search" | "git" | "settings";
+export type ActivityId = "files" | "search" | "git" | "preview" | "settings";
+
+/* Browser window in the shell's "quarry marks" language (see IconButton.tsx):
+   straight lines, right angles, one solid element. Lives here rather than in
+   the shared set because only the activity bar draws it. */
+const previewIcon = (
+  <svg viewBox="0 0 24 24" aria-hidden>
+    <rect x="3.6" y="4.6" width="16.8" height="14.8" />
+    <path d="M3.6 8.8h16.8" />
+    <rect x="6" y="5.9" width="1.8" height="1.6" fill="currentColor" stroke="none" />
+    <path d="M9.4 6.7h8" />
+  </svg>
+);
 
 interface ActivityBarProps {
   active: ActivityId;
@@ -53,6 +65,16 @@ export function ActivityBar({
         onClick={() => onChange("git")}
       >
         {Icons.sourceControl}
+      </button>
+      <button
+        type="button"
+        className={`activity-btn${active === "preview" ? " is-active" : ""}`}
+        title={t("preview.title")}
+        aria-label={t("preview.title")}
+        aria-pressed={active === "preview"}
+        onClick={() => onChange("preview")}
+      >
+        {previewIcon}
       </button>
       <button
         type="button"

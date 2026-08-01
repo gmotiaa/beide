@@ -76,6 +76,7 @@ export function AppearanceSection() {
           options={[
             { value: "ru", label: t("settings.languageRu") },
             { value: "en", label: t("settings.languageEn") },
+            { value: "be", label: t("settings.languageBe") },
           ]}
         />
       </Field>
