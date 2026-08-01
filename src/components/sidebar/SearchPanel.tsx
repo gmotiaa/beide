@@ -3,6 +3,8 @@ import { useTranslation } from "react-i18next";
 import { useWorkspaceStore } from "../../stores/workspace";
 import { useEditorStore } from "../../stores/editor";
 import { fileNameFromPath } from "../../lib/language";
+import { Button } from "../ui/button";
+import { Input } from "../ui/input";
 
 export function SearchPanel() {
   const { t } = useTranslation();
@@ -16,23 +18,30 @@ export function SearchPanel() {
   const [searching, setSearching] = useState(false);
 
   useEffect(() => {
-    if (!rootPath) {
+    if (!rootPath || !query.trim()) {
+      // Clearing the query mid-debounce left `searching` stuck on true — the
+      // panel showed the loading row under an empty input forever.
       setResults([]);
-      return;
-    }
-    if (!query.trim()) {
-      setResults([]);
+      setSearching(false);
       return;
     }
     let cancelled = false;
     setSearching(true);
     const handle = window.setTimeout(() => {
-      void searchFiles(query).then((paths) => {
-        if (!cancelled) {
-          setResults(paths);
-          setSearching(false);
-        }
-      });
+      searchFiles(query).then(
+        (paths) => {
+          if (!cancelled) {
+            setResults(paths);
+            setSearching(false);
+          }
+        },
+        () => {
+          if (!cancelled) {
+            setResults([]);
+            setSearching(false);
+          }
+        },
+      );
     }, 180);
     return () => {
       cancelled = true;
@@ -44,9 +53,9 @@ export function SearchPanel() {
     return (
       <div className="editor-empty" style={{ padding: 20 }}>
         <p>{t("sidebar.noWorkspace")}</p>
-        <button type="button" className="btn btn-primary" onClick={() => void openFolder()}>
+        <Button type="button" size="sm" onClick={() => void openFolder()}>
           {t("common.openFolder")}
-        </button>
+        </Button>
       </div>
     );
   }
@@ -54,7 +63,7 @@ export function SearchPanel() {
   return (
     <div className="search-panel">
       <div className="search-panel__input-wrap">
-        <input
+        <Input
           type="search"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
@@ -76,7 +85,7 @@ export function SearchPanel() {
             onClick={() => void openFile(path)}
           >
             {fileNameFromPath(path)}
-            <div style={{ color: "var(--text-faint)", fontSize: 11, marginTop: 2 }}>
+            <div className="mt-0.5 truncate text-[11px] text-[color:var(--text-faint)]">
               {path}
             </div>
           </button>

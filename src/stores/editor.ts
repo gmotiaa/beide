@@ -21,9 +21,25 @@ interface EditorState {
   updateContent: (path: string, content: string) => void;
   saveActive: () => Promise<void>;
   savePath: (path: string) => Promise<void>;
-  reloadPath: (path: string) => Promise<void>;
+  reloadPath: (path: string, discardDirty?: boolean) => Promise<void>;
   markSaved: (path: string, content: string) => void;
   clearError: () => void;
+  resetWorkspace: () => void;
+  remapPathTree: (oldPath: string, newPath: string) => void;
+  closePathTree: (path: string) => void;
+}
+
+function normalizePath(path: string): string {
+  return path.replace(/\\/g, "/").replace(/\/+$/, "");
+}
+
+function isPathTreeEntry(candidate: string, root: string): boolean {
+  const normalizedCandidate = normalizePath(candidate);
+  const normalizedRoot = normalizePath(root);
+  return (
+    normalizedCandidate === normalizedRoot ||
+    normalizedCandidate.startsWith(`${normalizedRoot}/`)
+  );
 }
 
 function toTab(path: string, content: string): EditorTab {
@@ -36,6 +52,8 @@ function toTab(path: string, content: string): EditorTab {
     dirty: false,
   };
 }
+
+let workspaceEpoch = 0;
 
 export const useEditorStore = create<EditorState>((set, get) => ({
   tabs: [],
@@ -52,8 +70,59 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   clearError: () => set({ lastError: null }),
 
+  resetWorkspace: () => {
+    workspaceEpoch += 1;
+    set({
+      tabs: [],
+      activePath: null,
+      cursorLine: 1,
+      cursorCol: 1,
+      monaco: null,
+      opening: false,
+      lastError: null,
+    });
+  },
+
+  remapPathTree: (oldPath, newPath) => {
+    const oldRoot = normalizePath(oldPath);
+    const newRoot = normalizePath(newPath);
+    const remap = (path: string): string => {
+      const normalized = normalizePath(path);
+      if (!isPathTreeEntry(normalized, oldRoot)) return normalized;
+      return `${newRoot}${normalized.slice(oldRoot.length)}`;
+    };
+    set((state) => ({
+      tabs: state.tabs.map((tab) => {
+        if (!isPathTreeEntry(tab.path, oldRoot)) return tab;
+        const path = remap(tab.path);
+        return {
+          ...tab,
+          path,
+          name: fileNameFromPath(path),
+          language: languageFromPath(path),
+        };
+      }),
+      activePath: state.activePath ? remap(state.activePath) : null,
+    }));
+  },
+
+  closePathTree: (path) => {
+    const root = normalizePath(path);
+    set((state) => {
+      const removed = state.tabs.filter((tab) => isPathTreeEntry(tab.path, root));
+      if (!removed.length) return state;
+      const tabs = state.tabs.filter((tab) => !isPathTreeEntry(tab.path, root));
+      const activePath =
+        state.activePath && isPathTreeEntry(state.activePath, root)
+          ? (tabs[0]?.path ?? null)
+          : state.activePath;
+      return { tabs, activePath };
+    });
+  },
+
   openFile: async (path) => {
-    const normalized = path.replace(/\\/g, "/");
+    const epoch = workspaceEpoch;
+    const normalized = normalizePath(path);
     const existing = get().tabs.find((t) => t.path === normalized || t.path === path);
     if (existing) {
       set({ activePath: existing.path, lastError: null });
@@ -68,6 +137,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     set({ opening: true, lastError: null });
     try {
       const content = await api.workspace.readFile(normalized);
+      if (epoch !== workspaceEpoch) return;
       const tab = toTab(normalized, content);
       set((s) => ({
         tabs: [...s.tabs.filter((t) => t.path !== tab.path), tab],
@@ -76,6 +146,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         lastError: null,
       }));
     } catch (e) {
+      if (epoch !== workspaceEpoch) return;
       const msg = e instanceof Error ? e.message : String(e);
       console.error("[beide] openFile failed", normalized, e);
       set({ opening: false, lastError: `Cannot open ${normalized}: ${msg}` });
@@ -151,13 +222,23 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     await savePath(activePath);
   },
 
-  reloadPath: async (path) => {
+  reloadPath: async (path, discardDirty = false) => {
+    const epoch = workspaceEpoch;
     const api = getBeide();
     if (!api) return;
+    const exists = await api.workspace.pathExists(path);
+    if (epoch !== workspaceEpoch) return;
+    if (!exists) {
+      if (discardDirty || !get().tabs.find((tab) => tab.path === path)?.dirty) {
+        get().closeTab(path);
+      }
+      return;
+    }
     const content = await api.workspace.readFile(path);
+    if (epoch !== workspaceEpoch) return;
     // Callers check `dirty` before calling; re-check here so keystrokes made
     // while the read was in flight aren't overwritten.
-    if (get().tabs.find((t) => t.path === path)?.dirty) return;
+    if (!discardDirty && get().tabs.find((t) => t.path === path)?.dirty) return;
     set((s) => ({
       tabs: s.tabs.map((t) =>
         t.path === path

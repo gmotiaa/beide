@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next";
+import { findModel } from "../../lib/models";
 import { useAgentStore } from "../../stores/agent";
 import { useEditorStore } from "../../stores/editor";
 import { useSettingsStore } from "../../stores/settings";
@@ -17,7 +18,11 @@ export function StatusBar() {
   const mode = useAgentStore((s) => s.mode);
 
   const active = tabs.find((tab) => tab.path === activePath);
-  const shownModel = model || modelLabel;
+  // Same display name as the picker — the raw id ("gpt-5.6-terra") read like
+  // a debug artifact in the corner of every window.
+  const rawModel = model || modelLabel;
+  const entry = rawModel ? findModel(rawModel) : undefined;
+  const shownModel = entry ? `${entry.name} ${entry.version}` : rawModel;
 
   return (
     <footer className="status-bar">

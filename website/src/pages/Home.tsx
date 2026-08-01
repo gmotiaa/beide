@@ -1,4 +1,3 @@
-import { Link } from "react-router-dom";
 import { ArrowRight, Check, Download, Github, X } from "lucide-react";
 
 import AsciiFire from "@/components/originkit/ascii-flame";
@@ -203,10 +202,10 @@ export default function Home() {
 
           <div className="mt-10 flex justify-center">
             <Button asChild variant="ghost">
-              <Link to="/features">
+              <a href="/features">
                 Все возможности
                 <ArrowRight />
-              </Link>
+              </a>
             </Button>
           </div>
         </Container>

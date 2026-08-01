@@ -90,6 +90,7 @@ const SEALED_RPCS = [
   ["add_credits", { p_amount: 1 }],
   ["reset_usage_windows", {}],
   ["app_flag", { p_key: "demo_billing", p_default: false }],
+  ["get_encrypted_model_api_key", {}],
   ["ensure_usage_ledger", { p_user: "00000000-0000-0000-0000-000000000000" }],
 ];
 

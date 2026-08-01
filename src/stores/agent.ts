@@ -5,6 +5,7 @@ import type {
   PermissionRequest,
   ProviderStatus,
 } from "../lib/types";
+import { DEFAULT_MODEL_ID, findModel } from "../lib/models";
 import { getBeide, onBeide } from "../lib/ipc";
 import i18n from "../i18n";
 import { useChatStore } from "./chat";
@@ -47,9 +48,12 @@ interface AgentState {
   streaming: boolean;
   ready: boolean;
   model?: string;
+  /** "Provider not responding, attempt N of M" while pi auto-retries. */
+  retryNotice: string | null;
   permission: PermissionRequest | null;
   /** Provider credential status; empty until the first refresh resolves. */
   providers: ProviderStatus[];
+  providersLoaded: boolean;
   unsub: (() => void) | null;
 
   init: () => void;
@@ -163,8 +167,10 @@ export const useAgentStore = create<AgentState>((set, get) => ({
   streaming: false,
   ready: false,
   model: undefined,
+  retryNotice: null,
   permission: null,
   providers: [],
+  providersLoaded: false,
   unsub: null,
 
   init: () => {
@@ -212,8 +218,12 @@ export const useAgentStore = create<AgentState>((set, get) => ({
       // instead of resetting the picker to a hardcoded default.
       const settings = useSettingsStore.getState();
       if (!settings.loaded) await settings.load();
-      const model =
+      const savedModel =
         status.model || get().model || useSettingsStore.getState().settings.modelLabel;
+      // A saved pick that has since been disabled (gateway lists it but it
+      // errors) must not silently stay selected.
+      const entry = findModel(savedModel);
+      const model = entry && !entry.disabled ? savedModel : DEFAULT_MODEL_ID;
       set({
         ready: status.ready,
         streaming: status.streaming,
@@ -236,9 +246,9 @@ export const useAgentStore = create<AgentState>((set, get) => ({
     const api = getBeide();
     if (!api) return;
     try {
-      set({ providers: await api.agent.getProviders() });
+      set({ providers: await api.agent.getProviders(), providersLoaded: true });
     } catch {
-      /* the picker falls back to showing every model */
+      set({ providers: [], providersLoaded: true });
     }
   },
 
@@ -275,21 +285,44 @@ export const useAgentStore = create<AgentState>((set, get) => ({
 
     if (!content && images.length === 0) return;
 
+    if (get().streaming) {
+      chat.setError(i18n.t("chat.turnInProgress"));
+      return;
+    }
+
+    const api = getBeide();
+    if (!api) {
+      chat.setError(i18n.t("chat.sendFailed"));
+      return;
+    }
+
+    if (!get().ready) await get().refreshStatus();
+    if (!get().ready) {
+      chat.setError(i18n.t("chat.openProjectFirst"));
+      return;
+    }
+
+    if (!get().providersLoaded) await get().refreshProviders();
+
+    if (get().providersLoaded && !get().providers.some((provider) => provider.connected)) {
+      chat.setError(i18n.t("chat.noProviderConfigured"));
+      return;
+    }
+
     // Token charge: Supabase when signed in, else local (Electron/userData)
     const usage = useUsageStore.getState();
     let gate: { ok: boolean; reason?: string };
     try {
       gate = await usage.recordPrompt(content || "(image)");
     } catch {
-      // Metering is bookkeeping — a broken usage.json must not block sending.
-      gate = { ok: true };
+      chat.setError(i18n.t("settings.meteringUnavailable"));
+      return;
     }
     if (!gate.ok) {
       chat.setError(gate.reason ?? i18n.t("settings.chatLimitError"));
       return;
     }
 
-    const api = getBeide();
     chat.appendUserMessage(content || "(image)", images, mentions);
     chat.ensureAssistantStreaming();
     set({ streaming: true });
@@ -305,15 +338,6 @@ export const useAgentStore = create<AgentState>((set, get) => ({
         : undefined,
       openFiles: editor.tabs.map((t) => t.path),
     };
-
-    if (!api) {
-      chat.appendAssistantDelta(
-        "\n\n_window.beide unavailable — run inside Electron._",
-      );
-      chat.finalizeAssistant();
-      set({ streaming: false });
-      return;
-    }
 
     try {
       const result = await api.agent.prompt(payload);
@@ -398,8 +422,25 @@ export const useAgentStore = create<AgentState>((set, get) => ({
     const evSession = typeof r.beideSessionId === "string" ? r.beideSessionId : null;
     const foreign = Boolean(evSession && chat.sessionId && evSession !== chat.sessionId);
     const globalType =
-      type.startsWith("beide") || type === "model_select" || type === "error" || type === "auto_retry_end";
+      type.startsWith("beide") ||
+      type === "model_select" ||
+      type === "error" ||
+      type === "auto_retry_start" ||
+      type === "auto_retry_end";
     if (foreign && !globalType) return;
+
+    // pi retries a hung/failed provider request silently for minutes — say so
+    // instead of leaving the shimmer spinning with no explanation.
+    if (type === "auto_retry_start") {
+      const attempt = Number(r.attempt ?? 0) || 1;
+      const max = Number(r.maxAttempts ?? 0) || 0;
+      set({
+        retryNotice: max
+          ? i18n.t("chat.providerRetry", { attempt, max })
+          : i18n.t("chat.providerRetryNoMax", { attempt }),
+      });
+      return;
+    }
 
     // pi SDK: message_update + assistantMessageEvent.text_delta
     if (type === "message_update") {
@@ -426,7 +467,8 @@ export const useAgentStore = create<AgentState>((set, get) => ({
         if (delta) {
           chat.finalizeThinking();
           chat.appendAssistantDelta(delta);
-          set({ streaming: true });
+          // Bytes are flowing again — the retry (if any) succeeded.
+          set({ streaming: true, retryNotice: null });
         }
         return;
       }
@@ -481,7 +523,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
           }
         }
         chat.finalizeAssistant();
-        set({ streaming: false });
+        set({ streaming: false, retryNotice: null });
         void get().refreshStatus();
       }
       return;
@@ -518,7 +560,17 @@ export const useAgentStore = create<AgentState>((set, get) => ({
         detail: formatToolDetail(toolName, args),
         args,
       });
-      void useUsageStore.getState().recordTools(1);
+      // Tool charges are gated too: past the limit the turn is aborted instead
+      // of silently running (and charging) an unbounded tool loop.
+      void useUsageStore
+        .getState()
+        .recordTools(1)
+        .then((gate) => {
+          if (!gate.ok) {
+            useChatStore.getState().setError(gate.reason ?? "");
+            void get().abort();
+          }
+        });
       set({ streaming: true });
       return;
     }
@@ -565,6 +617,16 @@ export const useAgentStore = create<AgentState>((set, get) => ({
       return;
     }
 
+    // Provider-reported usage for a finished assistant message — the real
+    // charge (account-level, so the session filter does not apply).
+    if (type === "beide_usage" || type === "beide:usage") {
+      const tokens = Number(r.tokens);
+      if (Number.isFinite(tokens) && tokens > 0) {
+        void useUsageStore.getState().spendActual(tokens);
+      }
+      return;
+    }
+
     if (type === "beide_status" || type === "beide:status") {
       const status = r as {
         streaming?: boolean;
@@ -578,6 +640,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
       if (status.streaming === false) {
         chat.finalizeThinking();
         chat.finalizeAssistant();
+        set({ retryNotice: null });
       }
       return;
     }
@@ -612,6 +675,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
     }
 
     if (type === "error" || type === "auto_retry_end") {
+      set({ retryNotice: null });
       if (type === "auto_retry_end" && (r as { success?: boolean }).success) return;
       const err = String(
         r.error ?? r.errorMessage ?? r.finalError ?? "Agent error",

@@ -34,12 +34,20 @@ export type QuestionToolProps = {
   chatStatus?: string;
 };
 
-function formatAnswer(answer: QuestionAnswer) {
-  if (answer.kind === "skip") return "Skipped";
-  if (answer.kind === "text") return answer.text || "Answered";
-  const ids = answer.selectedIds?.length ? answer.selectedIds.join(", ") : "";
-  if (answer.text) return ids ? `${ids} (${answer.text})` : answer.text;
-  return ids || "Answered";
+function formatAnswer(
+  answer: QuestionAnswer,
+  t: (key: string) => string,
+  labelFor?: (id: string) => string,
+) {
+  if (answer.kind === "skip") return t("agentElements.questionSkipped");
+  if (answer.kind === "text")
+    return answer.text || t("agentElements.questionAnswered");
+  // Show option labels, not raw ids like "opt_1".
+  const labels = answer.selectedIds?.length
+    ? answer.selectedIds.map((id) => labelFor?.(id) ?? id).join(", ")
+    : "";
+  if (answer.text) return labels ? `${labels} (${answer.text})` : answer.text;
+  return labels || t("agentElements.questionAnswered");
 }
 
 export function QuestionTool({ part }: QuestionToolProps) {
@@ -70,8 +78,6 @@ export function QuestionTool({ part }: QuestionToolProps) {
     setLocalIndex(part.input?.questionIndex ?? 1);
   }, [part.toolCallId]);
 
-  if (!question) return null;
-
   const outputAnswer = part.output?.answer;
   const answeredCount = Object.keys(localAnswers).length;
   const isComplete =
@@ -90,19 +96,42 @@ export function QuestionTool({ part }: QuestionToolProps) {
   }, [isComplete, localAnswers, totalQuestions]);
   const summaryText = useMemo(() => {
     if (!isComplete) return "";
+    const labelForQuestion = (index: number) => (id: string) =>
+      questions[index - 1]?.options?.find((o) => o.id === id)?.label ?? id;
     if (summaryAnswers.length > 0) {
       return summaryAnswers
         .map(
           (item) =>
-            `${item.index}: ${item.answer ? formatAnswer(item.answer) : "Pending"}`,
+            `${item.index}: ${
+              item.answer
+                ? formatAnswer(item.answer, t, labelForQuestion(item.index))
+                : t("agentElements.questionPending")
+            }`,
         )
         .join(" • ");
     }
-    if (outputAnswer) return formatAnswer(outputAnswer);
+    if (outputAnswer)
+      return formatAnswer(outputAnswer, t, labelForQuestion(clampedIndex));
     if (localAnswers[clampedIndex])
-      return formatAnswer(localAnswers[clampedIndex]);
-    return "Pending";
-  }, [isComplete, summaryAnswers, outputAnswer, localAnswers, clampedIndex]);
+      return formatAnswer(
+        localAnswers[clampedIndex],
+        t,
+        labelForQuestion(clampedIndex),
+      );
+    return t("agentElements.questionPending");
+  }, [
+    isComplete,
+    summaryAnswers,
+    outputAnswer,
+    localAnswers,
+    clampedIndex,
+    questions,
+    t,
+  ]);
+
+  // After every hook: an early return above the useMemos changed the hook
+  // count between renders and crashed React when the input filled in later.
+  if (!question) return null;
 
   const goPrev = () => {
     if (!canGoPrev) return;

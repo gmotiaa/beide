@@ -1,5 +1,4 @@
 import * as React from "react";
-import { useLocation } from "react-router-dom";
 
 import { CodeBlock } from "@/components/site/code-block";
 import {
@@ -22,7 +21,7 @@ import { DOCS, FAQ } from "@/data/site";
 import { cn } from "@/lib/utils";
 
 export default function Docs() {
-  const { hash } = useLocation();
+  const hash = window.location.hash;
   const [active, setActive] = React.useState(DOCS[0].id);
 
   React.useEffect(() => {

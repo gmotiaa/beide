@@ -13,6 +13,10 @@ import {
   IconChecklist as ListTodo,
   IconLogout as LogOut,
 } from "@tabler/icons-react";
+// Registry entries are plain functions, not components — go through i18n.t
+// directly. Only the entries beide actually renders are localized; the rest
+// of the vendored table keeps its upstream English strings.
+import i18n from "../../../i18n";
 
 export type ToolVariant = "simple" | "collapsible";
 
@@ -167,7 +171,9 @@ export const toolRegistry: Record<string, ToolMeta> = {
     title: (part) => {
       const isPending =
         part.state !== "output-available" && part.state !== "output-error";
-      return isPending ? "Reading" : "Read";
+      return isPending
+        ? i18n.t("agentElements.readRunning")
+        : i18n.t("agentElements.readDone");
     },
     subtitle: (part) => {
       const filePath = pickFilePath(part.input);
@@ -185,6 +191,7 @@ export const toolRegistry: Record<string, ToolMeta> = {
         part.state !== "output-available" && part.state !== "output-error";
       return isPending ? "Git status…" : "Git status";
     },
+    // Branch/dirty subtitles are git terms — deliberately not localized.
     subtitle: (part) => {
       const branch = part.output?.details?.branch || part.output?.branch || "";
       const dirty = part.output?.details?.dirty ?? part.output?.dirty;
@@ -199,12 +206,14 @@ export const toolRegistry: Record<string, ToolMeta> = {
     title: (part) => {
       const isPending =
         part.state !== "output-available" && part.state !== "output-error";
-      return isPending ? "Mapping workspace…" : "Workspace map";
+      return isPending
+        ? i18n.t("agentElements.workspaceMapRunning")
+        : i18n.t("agentElements.workspaceMapDone");
     },
     subtitle: (part) => {
       const p = part.input?.path || part.output?.details?.path || ".";
       const n = part.output?.details?.entries;
-      if (typeof n === "number") return `${p} · ${n} entries`;
+      if (typeof n === "number") return `${p} · ${n}`;
       return String(p);
     },
     variant: "simple",
@@ -214,7 +223,9 @@ export const toolRegistry: Record<string, ToolMeta> = {
     title: (part) => {
       const isPending =
         part.state !== "output-available" && part.state !== "output-error";
-      return isPending ? "Reading project…" : "Project info";
+      return isPending
+        ? i18n.t("agentElements.projectInfoRunning")
+        : i18n.t("agentElements.projectInfoDone");
     },
     subtitle: (part) => {
       const name = part.output?.details?.name || part.output?.name;

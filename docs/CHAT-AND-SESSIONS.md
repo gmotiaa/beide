@@ -73,9 +73,12 @@ rewrite the text written before the tools ran.
    dev HMR reload (or a crash) mid-stream wiped the prompt and the tool cards,
    and the rest of the answer opened a fresh orphan session — the answer looked
    truncated and the actions were gone.
-5. **Images are stripped before saving.** `compactForSave` drops base64 blobs
-   over 2 000 chars; keeping them blew past `sessionMessageChars` and made the
-   whole save throw.
+5. **Images are stripped before saving — by both writers.** The renderer's
+   `compactForSave` and main's `SessionService` (`compactImages` in
+   `appendMessages`/`replaceMessages`) drop base64 blobs over 2 000 chars.
+   Keeping them blew past `sessionMessageChars` on the renderer path, and on
+   the main path a few photo-sized images pushed the file past
+   `MAX_SESSION_FILE_CHARS`, making the session permanently unreadable.
 
 ## Restoring vs. loading
 

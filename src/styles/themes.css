@@ -46,7 +46,10 @@
 
   --text: #22252a;
   --text-muted: #6e7379;
-  --text-faint: #9a9c99;
+  /* Meta text at 10-12px sits on --panel everywhere; #9a9c99 measured ~2.6:1
+     against it — unreadable. Keep "faint" clearly quieter than muted, but at
+     AA-ish contrast for small labels. */
+  --text-faint: #7c8085;
 
   --accent: #2e7d6b;
   --accent-2: #3e9c86;
@@ -83,7 +86,7 @@
 
   --text: #e9e7e2;
   --text-muted: #979c9d;
-  --text-faint: #676c6e;
+  --text-faint: #82898b;
 
   --accent: #4fa88f;
   --accent-2: #6bc0a8;
@@ -124,7 +127,7 @@
 
   --text: #efede8;
   --text-muted: #9aa0a1;
-  --text-faint: #646a6c;
+  --text-faint: #7f8688;
 
   --accent: #5fbfa3;
   --accent-2: #7dd4bb;
@@ -174,6 +177,8 @@
 
   --focus-ring: 0 0 0 3px color-mix(in oklch, var(--accent) 22%, transparent);
   --hairline: 1px solid var(--border);
+  /* Text/icons on a solid --danger fill (e.g. the window close button). */
+  --danger-contrast: #ffffff;
 }
 
 /* ── shadcn raw token names ───────────────────────────────

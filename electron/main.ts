@@ -1,6 +1,8 @@
-import { app, BrowserWindow, nativeImage, shell } from "electron";
+import { app, BrowserWindow, dialog, nativeImage, shell } from "electron";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+// electron-updater is CJS; named imports break under the ESM main bundle.
+import electronUpdater from "electron-updater";
 import { createServices, disposeServices, registerIpc, type BeideServices } from "./ipc";
 
 /**
@@ -13,8 +15,7 @@ import { createServices, disposeServices, registerIpc, type BeideServices } from
 // into the app's env would put admin credentials one `env` away from any child
 // shell the agent drives.
 const ENV_ALLOWLIST = new Set([
-  "BEIDE_GOOGLE_API_KEY",
-  "BEIDE_NVIDIA_API_KEY",
+  "BEIDE_ECHOGATE_API_KEY",
   "BEIDE_OPEN_DEVTOOLS",
   "VITE_SUPABASE_URL",
   "VITE_SUPABASE_ANON_KEY",
@@ -166,6 +167,42 @@ function createWindow(): BrowserWindow {
   return win;
 }
 
+/**
+ * Auto-update against the generic feed configured in electron-builder.yml
+ * (`publish.url` must serve latest.yml + the installers). Dev builds and
+ * portable exes are skipped: only the NSIS install layout can be swapped.
+ * Unsigned builds still update, but Windows shows the unknown-publisher
+ * prompt on the swap — signing needs a real certificate (docs/KNOWN-GAPS.md).
+ */
+function setupAutoUpdate(): void {
+  if (!app.isPackaged || process.env.PORTABLE_EXECUTABLE_FILE) return;
+  const { autoUpdater } = electronUpdater;
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.on("update-downloaded", (info) => {
+    const win = mainWindow;
+    if (!win || win.isDestroyed()) return;
+    void dialog
+      .showMessageBox(win, {
+        type: "info",
+        title: "beide",
+        message: `Доступно обновление ${info.version}`,
+        detail: "Обновление скачано. Перезапустить сейчас или установить при выходе?",
+        buttons: ["Перезапустить", "Позже"],
+        defaultId: 0,
+        cancelId: 1,
+      })
+      .then((r) => {
+        if (r.response === 0) autoUpdater.quitAndInstall();
+      });
+  });
+  autoUpdater.on("error", (error) => {
+    // No update hosting yet is a normal state — never bother the user.
+    console.warn("[beide updater]", error?.message ?? error);
+  });
+  void autoUpdater.checkForUpdates().catch(() => undefined);
+}
+
 function bootstrap(): void {
   if (services) {
     disposeServices(services);
@@ -196,6 +233,7 @@ if (!gotLock) {
 
   app.whenReady().then(() => {
     bootstrap();
+    setupAutoUpdate();
 
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) {
@@ -215,7 +253,10 @@ app.on("window-all-closed", () => {
   }
 });
 
-app.on("before-quit", () => {
+// `before-quit` fires before BrowserWindow close guards. Disposing here made
+// the renderer's final transcript flush call into an already-dead service
+// graph. Cleanup only once closing has actually been allowed.
+app.on("will-quit", () => {
   if (services) {
     disposeServices(services);
     services = null;

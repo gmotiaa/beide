@@ -1,0 +1,14 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "entry": [
+    "src/main.tsx",
+    "electron/main.ts",
+    "electron/preload.ts",
+    "electron/services/verification.test.ts",
+    "scripts/*.mjs",
+    "electron.vite.config.ts"
+  ],
+  "project": ["src/**/*.{ts,tsx}", "electron/**/*.ts", "scripts/**/*.mjs"],
+  "ignore": [".design-sync/**", "website/**", "src/lib/database.types.ts"],
+  "ignoreDependencies": ["monaco-editor"]
+}

@@ -209,7 +209,7 @@ export default function Agent() {
             </p>
             <p className="text-muted-foreground flex items-center gap-2 text-sm">
               <ImageIcon className="text-primary size-4" />
-              Картинки поддерживают Claude, Gemini, MiniMax и Kimi
+              Поддержка изображений зависит от выбранной модели EchoGate
             </p>
             <CodeBlock
               caption="BEIDE.md"

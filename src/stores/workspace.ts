@@ -1,7 +1,14 @@
 import { create } from "zustand";
-import type { FileNode } from "../lib/types";
+import type { BeideApi, FileNode } from "../lib/types";
 import { getBeide } from "../lib/ipc";
+import {
+  fetchUserSettingsCloud,
+  saveUserSettingsCloud,
+} from "../lib/supabase-settings";
+import i18n from "../i18n";
 import { useAgentStore } from "./agent";
+import { useChatStore } from "./chat";
+import { useEditorStore } from "./editor";
 
 interface WorkspaceState {
   rootPath: string | null;
@@ -18,7 +25,7 @@ interface WorkspaceState {
   loadChildren: (path: string) => Promise<FileNode[]>;
   searchFiles: (query: string) => Promise<string[]>;
   setRoot: (path: string | null) => void;
-  deletePath: (path: string) => Promise<void>;
+  deletePath: (path: string, discardDirty?: boolean) => Promise<void>;
   renamePath: (path: string, newName: string) => Promise<string>;
   revealInFolder: (path: string) => Promise<void>;
 }
@@ -27,6 +34,41 @@ async function readRootTree(): Promise<FileNode[]> {
   const api = getBeide();
   if (!api) return [];
   return api.workspace.readDir();
+}
+
+function sameRoot(a: string | null, b: string): boolean {
+  if (!a) return false;
+  const normalize = (value: string) =>
+    value.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+  return normalize(a) === normalize(b);
+}
+
+/**
+ * Reopen the workspace from the previous launch: local settings first, the
+ * cloud copy as fallback (fresh machine, same account). `setRoot` itself
+ * validates the directory still exists — a moved/deleted folder just leaves
+ * the app on the empty state.
+ */
+async function restoreLastWorkspace(api: BeideApi): Promise<string | null> {
+  try {
+    let last = (await api.settings.get()).lastWorkspacePath;
+    if (!last) {
+      last = (await fetchUserSettingsCloud())?.last_workspace_path ?? null;
+    }
+    if (!last) return null;
+    return await api.workspace.setRoot(last);
+  } catch {
+    return null;
+  }
+}
+
+function pathContains(candidate: string, root: string): boolean {
+  const normalizedCandidate = candidate.replace(/\\/g, "/");
+  const normalizedRoot = root.replace(/\\/g, "/").replace(/\/+$/, "");
+  return (
+    normalizedCandidate === normalizedRoot ||
+    normalizedCandidate.startsWith(`${normalizedRoot}/`)
+  );
 }
 
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
@@ -44,13 +86,25 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     if (!api) return;
     set({ loading: true, error: null });
     try {
-      const root = await api.workspace.getRoot();
+      let root = await api.workspace.getRoot();
+      let restored = false;
+      if (!root) {
+        root = await restoreLastWorkspace(api);
+        restored = Boolean(root);
+      }
       if (!root) {
         set({ rootPath: null, tree: [], loading: false });
         return;
       }
       const tree = await readRootTree();
       set({ rootPath: root, tree, loading: false, childrenCache: {}, expanded: {} });
+      if (restored) {
+        // ChatPanel mounted before the root existed, so its own restore call
+        // found nothing — re-run it now that main knows the workspace.
+        void useChatStore.getState().restoreActiveSession();
+        void useChatStore.getState().refreshSessions();
+        void useAgentStore.getState().refreshStatus();
+      }
     } catch (e) {
       set({
         loading: false,
@@ -62,13 +116,26 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   openFolder: async () => {
     const api = getBeide();
     if (!api) return;
-    set({ loading: true, error: null });
     try {
-      const root = await api.workspace.open();
-      if (!root) {
-        set({ loading: false });
+      const selected = await api.workspace.pickFolder();
+      if (!selected || sameRoot(get().rootPath, selected)) return;
+
+      const editor = useEditorStore.getState();
+      if (
+        editor.tabs.some((tab) => tab.dirty) &&
+        !window.confirm(i18n.t("editor.changeWorkspaceUnsavedConfirm"))
+      ) {
         return;
       }
+
+      // This must finish while main still points at the outgoing workspace;
+      // otherwise the transcript would be written into the new project's
+      // `.beide/sessions` directory.
+      await useChatStore.getState().flushBeforeWorkspaceChange();
+      set({ loading: true, error: null });
+      const root = await api.workspace.setRoot(selected);
+      useEditorStore.getState().resetWorkspace();
+      useChatStore.getState().resetWorkspace();
       const tree = await api.workspace.readDir();
       set({
         rootPath: root,
@@ -78,6 +145,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         expanded: {},
       });
       void useAgentStore.getState().refreshStatus();
+      // Cloud copy of the last workspace — restores on a fresh machine.
+      void saveUserSettingsCloud({ last_workspace_path: root });
     } catch (e) {
       set({
         loading: false,
@@ -151,19 +220,18 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
   },
 
-  deletePath: async (path) => {
+  deletePath: async (path, discardDirty = false) => {
     const api = getBeide();
     if (!api) throw new Error("beide API unavailable");
-    await api.workspace.deletePath(path);
-    // Close tab if open
-    const editor = (await import("./editor")).useEditorStore.getState();
-    if (editor.tabs.some((t) => t.path === path || t.path.startsWith(path + "/"))) {
-      for (const tab of [...editor.tabs]) {
-        if (tab.path === path || tab.path.startsWith(path + "/")) {
-          editor.closeTab(tab.path);
-        }
-      }
+    const editor = useEditorStore.getState();
+    const dirty = editor.tabs.filter(
+      (tab) => tab.dirty && pathContains(tab.path, path),
+    );
+    if (dirty.length && !discardDirty) {
+      throw new Error(i18n.t("fileTree.unsavedDeleteBlocked"));
     }
+    await api.workspace.deletePath(path);
+    editor.closePathTree(path);
     await get().refreshTree();
   },
 
@@ -171,13 +239,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const api = getBeide();
     if (!api) throw new Error("beide API unavailable");
     const newPath = await api.workspace.renamePath(path, newName);
-    const editor = (await import("./editor")).useEditorStore.getState();
-    const tab = editor.tabs.find((t) => t.path === path);
-    if (tab) {
-      // reload as new path
-      editor.closeTab(path);
-      void editor.openFile(newPath);
-    }
+    // Preserve both saved and dirty buffers, including every descendant when a
+    // directory moves. Reloading from disk here discarded unsaved edits.
+    useEditorStore.getState().remapPathTree(path, newPath);
     await get().refreshTree();
     return newPath;
   },

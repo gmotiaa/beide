@@ -122,6 +122,8 @@ interface ChatState {
   loadSession: (id: string) => Promise<void>;
   refreshSessions: () => Promise<void>;
   persistSession: (immediate?: boolean) => Promise<void>;
+  flushBeforeWorkspaceChange: () => Promise<void>;
+  resetWorkspace: () => void;
   setError: (error: string | null) => void;
 }
 
@@ -350,15 +352,67 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
-  setMessages: (messages) => set({ messages }),
+  setMessages: (messages) => {
+    transcriptEpoch++;
+    set({ messages });
+  },
 
-  clear: () => set({ messages: [], draft: "", images: [], mentions: [], error: null }),
+  clear: () => {
+    transcriptEpoch++;
+    set({ messages: [], draft: "", images: [], mentions: [], error: null });
+  },
+
+  flushBeforeWorkspaceChange: async () => {
+    const api = getBeide();
+    if (!api) return;
+    try {
+      await api.agent.abort();
+    } catch {
+      /* best effort; the main workspace transition also tears the runtime down */
+    }
+
+    const outgoing = { id: get().sessionId, messages: get().messages };
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+    }
+    const flush = async () => {
+      if (!outgoing.messages.length) return;
+      await saveSnapshot(api, outgoing.id, outgoing.messages);
+    };
+    saveChain = saveChain.then(flush, flush);
+    try {
+      await saveChain;
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      set({ error: message });
+      throw e;
+    }
+  },
+
+  resetWorkspace: () => {
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+    }
+    transcriptEpoch++;
+    sessionCreation = null;
+    set({
+      messages: [],
+      draft: "",
+      images: [],
+      mentions: [],
+      sessionId: null,
+      sessions: [],
+      sessionsLoading: false,
+      error: null,
+    });
+  },
 
   newSession: async () => {
     const api = getBeide();
     if (!api) {
       get().clear();
-      transcriptEpoch++;
       set({ sessionId: null });
       return;
     }
@@ -366,23 +420,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // events are dropped by the session filter, so letting it run would only
     // burn tokens. Best-effort — switching must not depend on it.
     try {
-      await api.agent.abort();
+      await get().flushBeforeWorkspaceChange();
     } catch {
-      /* ignore */
+      // Keep the current transcript visible if it could not be saved.
+      return;
     }
-    // Pin the outgoing transcript before anything replaces it — a queued flush
-    // would otherwise wake up to an empty store and save nothing.
-    const outgoing = { id: get().sessionId, messages: get().messages };
-    if (saveTimer) {
-      clearTimeout(saveTimer);
-      saveTimer = null;
-    }
-    const flush = () => saveSnapshot(api, outgoing.id, outgoing.messages);
-    saveChain = saveChain.then(flush, flush).then(
-      () => undefined,
-      () => undefined,
-    );
-    await saveChain;
     // Create the fresh file BEFORE clearing: if this fails we stay on the
     // current transcript. Clearing first left sessionId null while main still
     // pointed at the old session — the next save adopted it and replaced the
@@ -397,8 +439,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return;
     }
     get().clear();
-    // The transcript is a different one from here on — invalidate queued saves.
-    transcriptEpoch++;
     set({ sessionId: created.id });
     await get().refreshSessions();
   },
@@ -435,8 +475,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } catch {
       /* ignore */
     }
-    await get().persistSession(true);
     try {
+      await get().persistSession(true);
       // settleRestored: a transcript loaded from disk describes finished work.
       // A mid-turn save (crash, reload) leaves streaming/running flags in the
       // file — without settling them the tools spin forever in the UI.
@@ -483,8 +523,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
           // main re-read the whole sessions dir once per tool call.
           void get().refreshSessions();
         }
-      } catch {
-        /* ignore persist errors */
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        set({ error: message });
+        throw e;
       }
     };
 
@@ -499,7 +541,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
       saveTimer = null;
-      saveChain = saveChain.then(run, run);
+      saveChain = saveChain.then(run, run).catch(() => undefined);
     }, 600);
     return Promise.resolve();
   },

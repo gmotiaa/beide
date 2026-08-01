@@ -111,6 +111,10 @@ export type ModelOption = {
   id: string;
   name: string;
   version?: string;
+  /** Section header label; consecutive options with the same group share one. */
+  group?: string;
+  /** Listed but not selectable (e.g. temporarily broken upstream). */
+  disabled?: boolean;
 };
 
 /** Props for the <AgentChat> drop-in component */

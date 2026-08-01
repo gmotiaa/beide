@@ -59,26 +59,39 @@ path inside, and binary files are stored base64 (`encoding: "base64"`).
 
 `src/lib/models.ts` is the single source of truth — the picker and the main
 process resolver both import it. Never hardcode a model id anywhere else.
+Every entry carries a `vendor` (openai/anthropic/google/xai/zhipu/moonshot);
+the picker groups by it in `VENDOR_ORDER`, and display names carry no gateway
+branding (the settings screen shows the provider as "beide Cloud").
 
-| Provider | Credential |
-| --- | --- |
-| `anthropic` | `pi auth login` (Claude Pro/Max OAuth or an API key) in `~/.pi/agent/auth.json` |
-| `xai` | same |
-| `nvidia` | `BEIDE_NVIDIA_API_KEY` in `.env` |
-| `google` | `BEIDE_GOOGLE_API_KEY` in `.env` |
+The only provider is `echogate` through its OpenAI-compatible
+`https://api.echogate.one/v1` endpoint. The key normally arrives from
+Supabase after sign-in: the renderer calls the
+`get_encrypted_model_api_key()` RPC (authenticated only) and hands the
+AES-256-GCM ciphertext to main over `agent:installProviderKey`;
+`electron/services/provider-key.ts` decrypts it in memory. Publish or rotate
+it with `npm run supabase:secrets`. `BEIDE_ECHOGATE_API_KEY` in local `.env`
+is a dev override that wins over the cloud key. Provider status comes from
+`ModelRuntime.getProviderAuthStatus()` and exposes only `{ connected, kind }`;
+the key is installed as an in-memory runtime override and never reaches a
+child shell.
 
-`readProviderStatus()` reports only `{ connected, kind }` per provider. beide
-**never reads, copies, prints or logs token values** from `auth.json` — inspect
-key names and types only. Keep it that way.
+The catalog mirrors the gateway's full `/v1/models` (33 entries across
+OpenAI/Anthropic/Google/xAI/DeepSeek/Alibaba/Moonshot/Zhipu/MiniMax), with
+real context windows, output caps and image support taken from that endpoint
+(output capped at 131k so a runaway generation cannot eat a quota). Entries
+the gateway lists but which currently error carry `disabled: true` — greyed
+and unselectable in the picker (claude-opus-5, kimi-k3 as of 2026-08-01;
+re-verify before re-enabling). When a saved model id is unavailable or
+disabled, the picker falls back to `DEFAULT_MODEL_ID` (`gpt-5.6-terra`);
+the runtime additionally emits a `beide:warning` for unavailable ids.
 
-Resolution order when the requested model is unavailable: requested →
-`DEFAULT_MODEL_ID` → `deepseek-ai/deepseek-v4-pro` → xAI fallback. Any fallback
-emits a `beide:warning` event so the UI can say the pick was ignored; silent
-snap-back reads as a bug.
-
-Other emitted signals: `beide:model_fallback` (pi's own message) and
+Other emitted signals: `beide:model_fallback` (pi's own message),
 `beide:warning` for "no providers configured" and "model does not accept
-images, they were dropped".
+images, they were dropped", and `beide:usage` with the provider-reported token
+count of every finished assistant message — the renderer charges the account
+with it (`spend_tokens`); the local estimate only pre-gates. pi's
+`auto_retry_start` is surfaced in the chat as "provider not responding,
+attempt N of M" (provider idle timeout 90 s, 2 retries).
 
 ## Event stream
 

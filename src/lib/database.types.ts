@@ -239,6 +239,10 @@ export type Database = {
         }
       }
       get_billing: { Args: never; Returns: Json }
+      get_encrypted_model_api_key: {
+        Args: { p_provider?: string }
+        Returns: Json
+      }
       get_usage_history: { Args: { p_days?: number }; Returns: Json }
       reset_usage_windows: { Args: never; Returns: Json }
       set_my_plan: { Args: { p_plan: string }; Returns: Json }

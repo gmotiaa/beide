@@ -170,16 +170,31 @@ export const ToolGroup = memo(function ToolGroup({
     };
   }, [defaultOpen, isPending]);
 
+  // Seed from what is already revealed: this effect re-runs on every new
+  // nested tool, and starting from 1 each time collapsed the visible list
+  // back to one row and replayed the whole 450 ms reveal.
+  const revealedRef = useRef({ key: "", count: 0 });
+
   useEffect(() => {
     if (!isPending || nestedTools.length === 0) {
       setVisibleCount(nestedTools.length);
+      revealedRef.current = { key: streamKey, count: nestedTools.length };
       return;
     }
-    let index = 1;
-    setVisibleCount(Math.min(index, nestedTools.length));
+    if (revealedRef.current.key !== streamKey) {
+      revealedRef.current = { key: streamKey, count: 0 };
+    }
+    let index = Math.max(1, revealedRef.current.count);
+    const apply = () => {
+      const clamped = Math.min(index, nestedTools.length);
+      revealedRef.current = { key: streamKey, count: clamped };
+      setVisibleCount(clamped);
+    };
+    apply();
+    if (index >= nestedTools.length) return;
     const interval = setInterval(() => {
       index += 1;
-      setVisibleCount(Math.min(index, nestedTools.length));
+      apply();
       if (index >= nestedTools.length) clearInterval(interval);
     }, 450);
     return () => clearInterval(interval);

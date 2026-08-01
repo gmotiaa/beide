@@ -10,6 +10,9 @@ const ALLOWED_EVENTS = new Set([
   "agent:event",
   "agent:permission",
   "workspace:changed",
+  "window:close-requested",
+  "terminal:data",
+  "terminal:exit",
 ]);
 
 async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
@@ -30,7 +33,8 @@ async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
 
 const api: BeideApi = {
   workspace: {
-    open: () => invoke("workspace:open"),
+    pickFolder: () => invoke("workspace:pickFolder"),
+    setRoot: (path: string) => invoke("workspace:setRoot", path),
     getRoot: () => invoke("workspace:getRoot"),
     readDir: (path?: string) => invoke("workspace:readDir", path),
     readFile: (path: string) => invoke("workspace:readFile", path),
@@ -50,10 +54,12 @@ const api: BeideApi = {
       invoke("agent:respondPermission", id, allow, content),
     getStatus: () => invoke("agent:getStatus"),
     getProviders: () => invoke("agent:getProviders"),
+    installProviderKey: (ciphertext: string) =>
+      invoke("agent:installProviderKey", ciphertext),
   },
   checkpoint: {
     list: () => invoke("checkpoint:list"),
-    restore: (id: string) => invoke("checkpoint:restore", id),
+    restore: (id: string) => invoke<string[]>("checkpoint:restore", id),
   },
   settings: {
     get: () => invoke("settings:get"),
@@ -73,12 +79,16 @@ const api: BeideApi = {
   window: {
     minimize: () => invoke("window:minimize"),
     maximize: () => invoke("window:maximize"),
-    close: () => invoke("window:close"),
+    close: (discardUnsaved?: boolean) => invoke("window:close", discardUnsaved),
     isMaximized: () => invoke("window:isMaximized"),
+    setDirty: (dirty: boolean) => invoke("window:setDirty", dirty),
   },
-  usage: {
-    get: () => invoke("usage:get"),
-    increment: (delta) => invoke("usage:increment", delta),
+  terminal: {
+    create: (cols: number, rows: number) => invoke("terminal:create", cols, rows),
+    write: (id: string, data: string) => invoke("terminal:write", id, data),
+    resize: (id: string, cols: number, rows: number) =>
+      invoke("terminal:resize", id, cols, rows),
+    kill: (id: string) => invoke("terminal:kill", id),
   },
   on: (channel: string, listener: (...args: unknown[]) => void) => {
     if (!ALLOWED_EVENTS.has(channel)) {

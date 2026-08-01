@@ -9,6 +9,8 @@ export type ToolRowBaseProps = {
   shimmerLabel?: string;
   completeLabel: string;
   isAnimating: boolean;
+  /** Renders the settled label in the destructive color. */
+  isError?: boolean;
   detail?: string;
   trailingContent?: ReactNode;
   expandable?: boolean;
@@ -23,6 +25,7 @@ export function ToolRowBase({
   shimmerLabel,
   completeLabel,
   isAnimating,
+  isError = false,
   detail,
   trailingContent,
   expandable = false,
@@ -48,7 +51,12 @@ export function ToolRowBase({
             {icon}
           </span>
         )}
-        <span className="font-[450] whitespace-nowrap shrink-0">
+        <span
+          className={cn(
+            "font-[450] whitespace-nowrap shrink-0",
+            !isAnimating && isError && "text-destructive",
+          )}
+        >
           {isAnimating && shimmerLabel ? (
             <TextShimmer
               as="span"

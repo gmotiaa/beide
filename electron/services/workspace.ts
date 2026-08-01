@@ -10,7 +10,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { watch, type FSWatcher } from "node:fs";
-import { dirname, join, relative, sep } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import type { FileNode } from "../../src/lib/types";
 import {
   GitIgnoreMatcher,
@@ -40,7 +40,10 @@ export class WorkspaceService {
     return this.rootPath;
   }
 
-  async openFolder(): Promise<string | null> {
+  /** Pick a directory without changing any process state. The renderer first
+   * flushes the outgoing chat and resolves dirty editor buffers, then commits
+   * the selection through setRoot(). */
+  async pickFolder(): Promise<string | null> {
     const result = await dialog.showOpenDialog({
       properties: ["openDirectory"],
       title: "Open Folder — beide",
@@ -48,18 +51,22 @@ export class WorkspaceService {
     if (result.canceled || result.filePaths.length === 0) {
       return null;
     }
-    const chosen = result.filePaths[0]!;
-    await this.setRoot(chosen);
-    return chosen;
+    return result.filePaths[0]!;
   }
 
-  async setRoot(path: string): Promise<void> {
+  async setRoot(path: string): Promise<string> {
+    const absolute = resolve(path);
+    const info = await stat(absolute);
+    if (!info.isDirectory()) {
+      throw new Error(`Not a directory: ${path}`);
+    }
     this.stopWatch();
     this.dirCache.clear();
     this.pendingWatchPaths.clear();
-    this.rootPath = path;
-    await this.loadGitIgnore(path);
-    this.startWatch(path);
+    this.rootPath = absolute;
+    await this.loadGitIgnore(absolute);
+    this.startWatch(absolute);
+    return absolute;
   }
 
   private async loadGitIgnore(root: string): Promise<void> {
@@ -89,7 +96,7 @@ export class WorkspaceService {
       return cached.nodes;
     }
 
-    const absolute = resolveInWorkspace(root, dirPath);
+    const absolute = await resolveRealInWorkspace(root, dirPath);
     let entries;
     try {
       entries = await readdir(absolute, { withFileTypes: true });
@@ -196,7 +203,7 @@ export class WorkspaceService {
     const root = this.rootPath;
     if (!root) return false;
     try {
-      const absolute = resolveInWorkspace(root, filePath);
+      const absolute = await resolveRealInWorkspace(root, filePath);
       await access(absolute);
       return true;
     } catch {

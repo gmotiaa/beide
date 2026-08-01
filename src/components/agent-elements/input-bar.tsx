@@ -4,13 +4,11 @@ import type { ChatStatus } from "ai";
 import { cn } from "./utils/cn";
 
 type InputConfig = {
-  inputBarPlaceholder: string;
   attachmentButtonPosition: "left" | "right";
   attachmentPreviewStyle: "thumbnail" | "chip" | "hidden";
 };
 
 const DEFAULT_INPUT_CONFIG: InputConfig = {
-  inputBarPlaceholder: "Send a message...",
   attachmentButtonPosition: "left",
   attachmentPreviewStyle: "thumbnail",
 };
@@ -181,7 +179,7 @@ export const InputBar = memo(function InputBar({
     typingAnimation?.onComplete ?? (() => {}),
   );
 
-  const effectivePlaceholder = placeholder ?? config.inputBarPlaceholder;
+  const effectivePlaceholder = placeholder ?? t("chat.placeholder");
 
   const showAttach = Boolean(onAttach);
   const attachRight = config.attachmentButtonPosition === "right";
@@ -201,6 +199,17 @@ export const InputBar = memo(function InputBar({
     if (!autoFocus) return;
     textareaRef.current?.focus();
   }, [autoFocus]);
+
+  // A new info bar or question set must not stay hidden behind a dismissal
+  // of the previous one.
+  useEffect(() => {
+    setIsInfoBarOpen(true);
+  }, [infoBar?.title, infoBar?.description]);
+
+  useEffect(() => {
+    setQuestionBarIndex(1);
+    setDismissedQuestionId(null);
+  }, [questionBar?.id]);
 
   const handleSubmit = useCallback(() => {
     const trimmed = input.trim();

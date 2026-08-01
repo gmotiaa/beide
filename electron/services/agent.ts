@@ -1,4 +1,4 @@
-import { access, mkdir, open, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { access, mkdir, open, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { spawn } from "node:child_process";
 import type { BrowserWindow } from "electron";
@@ -19,7 +19,7 @@ import {
   type AgentSession,
 } from "@earendil-works/pi-coding-agent";
 
-/** NVIDIA (and similar) need longer connect/body timeouts than Node undici defaults */
+/** EchoGate requests need longer connect/body timeouts than Node undici defaults */
 let httpDispatcherReady = false;
 function ensureHttpDispatcher(): void {
   if (httpDispatcherReady) return;
@@ -41,11 +41,9 @@ import type {
   ProviderStatus,
 } from "../../src/lib/types";
 import {
-  ANTHROPIC_BASE_URL,
   DEFAULT_MODEL_ID,
-  GOOGLE_BASE_URL,
+  ECHOGATE_BASE_URL,
   MODEL_CATALOG,
-  NVIDIA_BASE_URL,
   findModel,
 } from "../../src/lib/models";
 import type { CheckpointService } from "./checkpoints";
@@ -58,10 +56,10 @@ import {
 } from "./paths";
 import type { SessionService } from "./sessions";
 import type { SettingsService } from "./settings";
-import type { UsageService } from "./usage";
+import { decryptProviderKey } from "./provider-key";
+import { validatePlanCommand } from "./plan-command";
 
 const PREFERRED_MODEL = DEFAULT_MODEL_ID;
-const XAI_FALLBACK_MODEL = "grok-4.5";
 
 /**
  * API keys MUST be read lazily at call time, not at module load.
@@ -69,78 +67,74 @@ const XAI_FALLBACK_MODEL = "grok-4.5";
  * so main.ts's loadEnvFile() hasn't executed yet when this module loads.
  * Capturing process.env at top level would always yield "".
  */
-function googleApiKey(): string {
-  return process.env.BEIDE_GOOGLE_API_KEY ?? "";
-}
-function nvidiaApiKey(): string {
-  return process.env.BEIDE_NVIDIA_API_KEY ?? "";
-}
-
-/**
- * Credentials pi keeps in ~/.pi/agent/auth.json. Only the shape is inspected —
- * beide never reads, copies or logs the token itself.
- */
-async function readStoredAuth(): Promise<Record<string, { type?: string }>> {
-  try {
-    const raw = await readFile(join(getPiAgentDir(), "auth.json"), "utf-8");
-    const parsed: unknown = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return {};
-    return parsed as Record<string, { type?: string }>;
-  } catch {
-    return {};
-  }
-}
-
-/**
- * Which providers can actually serve a request right now. Anthropic and xAI
- * come from a `pi auth login` (subscription OAuth or a pasted key); Google and
- * NVIDIA come from beide's own .env, and are mirrored into auth.json later.
- */
-export async function readProviderStatus(): Promise<ProviderStatus[]> {
-  const auth = await readStoredAuth();
-  const stored = (id: string): ProviderStatus["kind"] => {
-    const type = auth[id]?.type;
-    return type === "oauth" || type === "api_key" ? type : null;
-  };
-  const fromEnv = (id: string, key: string): ProviderStatus => ({
-    id: id as ProviderStatus["id"],
-    label: PROVIDER_LABELS[id as ProviderStatus["id"]],
-    connected: Boolean(key) || stored(id) !== null,
-    kind: key ? "api_key" : stored(id),
-  });
-  return [
-    {
-      id: "anthropic",
-      label: PROVIDER_LABELS.anthropic,
-      connected: stored("anthropic") !== null,
-      kind: stored("anthropic"),
-    },
-    fromEnv("nvidia", nvidiaApiKey()),
-    fromEnv("google", googleApiKey()),
-    {
-      id: "xai",
-      label: PROVIDER_LABELS.xai,
-      connected: stored("xai") !== null,
-      kind: stored("xai"),
-    },
-  ];
+function echogateEnvKey(): string {
+  return process.env.BEIDE_ECHOGATE_API_KEY ?? "";
 }
 
 const PROVIDER_LABELS: Record<ProviderStatus["id"], string> = {
-  anthropic: "Anthropic",
-  nvidia: "NVIDIA NIM",
-  google: "Google Gemini",
-  xai: "xAI",
+  echogate: "beide Cloud",
 };
 
 const ZERO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+const ZERO_USAGE = {
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+  totalTokens: 0,
+  cost: { ...ZERO_COST, total: 0 },
+};
+
+type PiAgentMessage = AgentSession["messages"][number];
 
 /**
- * OpenAI-compat for integrate.api.nvidia.com.
- * supportsUsageInStreaming:false — some NIM endpoints mishandle stream_options.
- * maxTokensField: max_tokens — required (not max_completion_tokens).
+ * UI transcripts intentionally do not persist pi's provider-specific tool-call
+ * envelopes. Hydrate only the conversational user/assistant text; orphaned
+ * toolResult messages are rejected by several providers. History is bounded so
+ * opening a large session cannot immediately overflow the model context.
  */
-const NVIDIA_COMPAT = {
+function transcriptToAgentMessages(
+  history: ChatMessage[],
+  model: { api: string; provider: string; id: string },
+): PiAgentMessage[] {
+  const selected: ChatMessage[] = [];
+  let chars = 0;
+  for (let index = history.length - 1; index >= 0 && selected.length < 120; index--) {
+    const message = history[index]!;
+    if (
+      (message.role !== "user" && message.role !== "assistant") ||
+      !message.content.trim()
+    ) {
+      continue;
+    }
+    if (chars + message.content.length > 200_000 && selected.length > 0) break;
+    selected.push(message);
+    chars += message.content.length;
+  }
+  selected.reverse();
+
+  return selected.map((message) => {
+    if (message.role === "user") {
+      return {
+        role: "user",
+        content: message.content,
+        timestamp: message.createdAt,
+      } as PiAgentMessage;
+    }
+    return {
+      role: "assistant",
+      content: [{ type: "text", text: message.content }],
+      api: model.api,
+      provider: model.provider,
+      model: model.id,
+      usage: ZERO_USAGE,
+      stopReason: "stop",
+      timestamp: message.createdAt,
+    } as PiAgentMessage;
+  });
+}
+
+const ECHOGATE_COMPAT = {
   supportsStore: false,
   supportsDeveloperRole: false,
   supportsReasoningEffort: false,
@@ -150,28 +144,23 @@ const NVIDIA_COMPAT = {
   supportsLongCacheRetention: false,
 };
 
-/**
- * NIM model descriptors, derived from the shared catalog so the picker and the
- * resolver can never disagree. `body.model` is exactly the catalog id.
- */
-const NVIDIA_MODELS: Record<string, Record<string, unknown>> = Object.fromEntries(
-  MODEL_CATALOG.filter((m) => m.provider === "nvidia").map((m) => [
+const ECHOGATE_MODELS: Record<string, Record<string, unknown>> = Object.fromEntries(
+  MODEL_CATALOG.filter((m) => m.provider === "echogate").map((m) => [
     m.id,
     {
       id: m.id,
       name: `${m.name} ${m.version}`,
       api: "openai-completions" as const,
-      provider: "nvidia" as const,
-      baseUrl: NVIDIA_BASE_URL,
+      provider: "echogate" as const,
+      baseUrl: ECHOGATE_BASE_URL,
       reasoning: false,
-      input: m.supportsImages
-        ? (["text", "image"] as Array<"text" | "image">)
-        : (["text"] as Array<"text" | "image">),
+      input: (m.supportsImages ? ["text", "image"] : ["text"]) as Array<
+        "text" | "image"
+      >,
       cost: ZERO_COST,
       contextWindow: m.contextWindow,
       maxTokens: m.maxTokens,
-      headers: { "NVCF-POLL-SECONDS": "3600" },
-      compat: NVIDIA_COMPAT,
+      compat: ECHOGATE_COMPAT,
     },
   ]),
 );
@@ -466,24 +455,6 @@ function uid(prefix: string): string {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-async function readJsonObject(path: string): Promise<Record<string, unknown>> {
-  try {
-    const parsed: unknown = JSON.parse(await readFile(path, "utf-8"));
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>;
-    }
-  } catch {
-    // missing or corrupt — start fresh
-  }
-  return {};
-}
-
-async function writeJsonAtomic(path: string, data: unknown): Promise<void> {
-  const tmp = `${path}.tmp_${process.pid}`;
-  await writeFile(tmp, JSON.stringify(data, null, 2), "utf-8");
-  await rename(tmp, path);
-}
-
 export class AgentService {
   private session: AgentSession | null = null;
   private unsubscribe: (() => void) | null = null;
@@ -494,6 +465,10 @@ export class AgentService {
   private selectedModelId: string | null = null;
   private modelLabel: string | undefined;
   private modelRuntime: ModelRuntime | null = null;
+  /** Last key the echogate provider was registered with, to skip no-op recomposes. */
+  private registeredEchogateKey: string | null = null;
+  /** Provider key delivered from Supabase after sign-in. Memory only. */
+  private cloudEchogateKey: string | null = null;
   private modelSupportsImages = false;
   private initPromise: Promise<void> | null = null;
   private runtimePromise: Promise<ModelRuntime> | null = null;
@@ -509,13 +484,14 @@ export class AgentService {
    * to be appended to (and then saved into) whatever transcript was open.
    */
   private currentTurnSessionId: string | null = null;
+  private pendingTranscript: ChatMessage[] = [];
+  private pendingRuntimeMessages: PiAgentMessage[] | null = null;
 
   constructor(
     private readonly settings: SettingsService,
     private readonly permissions: PermissionGateway,
     private readonly checkpoints: CheckpointService,
     private readonly sessions: SessionService,
-    private readonly usage?: UsageService,
   ) {}
 
   setMainWindow(win: BrowserWindow | null): void {
@@ -531,7 +507,10 @@ export class AgentService {
   }
 
   private async onWorkspaceChangedImpl(root: string | null): Promise<void> {
-    await this.teardownSession();
+    await this.teardownSession({ reason: "workspace change" });
+    this.pendingTranscript = [];
+    this.pendingRuntimeMessages = null;
+    this.currentTurnSessionId = null;
     this.workspaceRoot = root;
     this.checkpoints.setWorkspace(root);
     this.sessions.setWorkspace(root);
@@ -541,6 +520,21 @@ export class AgentService {
       this.permissions.setMode(s.permissionMode);
       void this.ensureRuntime();
     }
+  }
+
+  /** Bind the pi runtime to the transcript selected in the renderer. */
+  async onSessionChanged(
+    sessionId: string | null,
+    history: ChatMessage[],
+  ): Promise<void> {
+    const run = async () => {
+      await this.teardownSession({ reason: "chat session change" });
+      this.pendingTranscript = sessionId ? [...history] : [];
+      this.pendingRuntimeMessages = null;
+      this.currentTurnSessionId = null;
+    };
+    this.promptChain = this.promptChain.then(run, run);
+    return this.promptChain as Promise<void>;
   }
 
   async refreshPermissionMode(): Promise<void> {
@@ -563,8 +557,25 @@ export class AgentService {
   }
 
   /** Credential status per provider, for the settings screen. */
-  getProviders(): Promise<ProviderStatus[]> {
-    return readProviderStatus();
+  async getProviders(): Promise<ProviderStatus[]> {
+    const runtime = await this.ensureRuntime();
+    return this.providerStatuses(runtime);
+  }
+
+  private providerStatuses(runtime: ModelRuntime): ProviderStatus[] {
+    return (Object.keys(PROVIDER_LABELS) as ProviderStatus["id"][]).map((id) => {
+      const status = runtime.getProviderAuthStatus(id);
+      return {
+        id,
+        label: PROVIDER_LABELS[id],
+        connected: status.configured,
+        kind: status.configured
+          ? runtime.isUsingOAuth(id)
+            ? "oauth"
+            : "api_key"
+          : null,
+      };
+    });
   }
 
   async setMode(mode: AgentMode): Promise<void> {
@@ -581,7 +592,10 @@ export class AgentService {
     this.mode = mode;
     // Rebuild session so tool allowlist + system prompt match mode
     if (this.workspaceRoot) {
-      await this.teardownSession();
+      await this.teardownSession({
+        preserveRuntimeMessages: true,
+        reason: "agent mode change",
+      });
       // Session recreated lazily on next prompt
     }
   }
@@ -598,7 +612,10 @@ export class AgentService {
     this.selectedModelId = id;
     this.modelLabel = id;
     if (this.workspaceRoot) {
-      await this.teardownSession();
+      await this.teardownSession({
+        preserveRuntimeMessages: true,
+        reason: "model change",
+      });
     }
     this.emit({ type: "beide:model", model: id });
   }
@@ -866,64 +883,54 @@ export class AgentService {
     }
   }
 
-  private async setupCustomProviders(agentDir: string): Promise<void> {
+  /** .env override is the dev escape hatch; the cloud-delivered key is the norm. */
+  private effectiveEchogateKey(): string {
+    return echogateEnvKey().trim() || this.cloudEchogateKey || "";
+  }
+
+  /**
+   * Install the provider key fetched from Supabase by the renderer. Arrives as
+   * AES-256-GCM ciphertext; the plaintext lives only in this process's memory
+   * (never on disk, and stripSecretEnv keeps it out of agent-driven shells —
+   * it is installed as a runtime override, not an env var).
+   */
+  async installEncryptedProviderKey(
+    ciphertext: string,
+  ): Promise<{ ok: boolean; error?: string }> {
+    let key: string;
     try {
-      const GOOGLE_API_KEY = googleApiKey();
-      const NVIDIA_API_KEY = nvidiaApiKey();
-      if (GOOGLE_API_KEY) process.env.GEMINI_API_KEY = GOOGLE_API_KEY;
-      if (NVIDIA_API_KEY) process.env.NVIDIA_API_KEY = NVIDIA_API_KEY;
-      // Nothing to mirror — leave pi's files exactly as the user (or pi CLI)
-      // left them.
-      if (!GOOGLE_API_KEY && !NVIDIA_API_KEY) return;
-
-      const authPath = join(agentDir, "auth.json");
-      const modelsJsonPath = join(agentDir, "models.json");
-
-      // ~/.pi/agent/auth.json and models.json are shared with the pi CLI and
-      // any other tool the user runs. Only ever ADD/refresh the providers beide
-      // owns a .env key for; an empty .env key must not delete a credential the
-      // user configured elsewhere. Writes are tmp+rename: these files hold the
-      // user's OAuth tokens, and a crash mid-write would destroy them all.
-      const authData = await readJsonObject(authPath);
-      if (GOOGLE_API_KEY) authData.google = { type: "api_key", key: GOOGLE_API_KEY };
-      if (NVIDIA_API_KEY) authData.nvidia = { type: "api_key", key: NVIDIA_API_KEY };
-      await writeJsonAtomic(authPath, authData);
-
-      // Auth only — never re-list NIM models here (overlay drops baseUrl → 404 on wrong host)
-      const modelsConfig = await readJsonObject(modelsJsonPath);
-      const providers =
-        modelsConfig.providers && typeof modelsConfig.providers === "object"
-          ? (modelsConfig.providers as Record<string, unknown>)
-          : {};
-      if (GOOGLE_API_KEY) providers.google = { apiKey: GOOGLE_API_KEY };
-      if (NVIDIA_API_KEY) {
-        providers.nvidia = {
-          apiKey: NVIDIA_API_KEY,
-          baseUrl: NVIDIA_BASE_URL,
-          api: "openai-completions",
-        };
-      }
-      modelsConfig.providers = providers;
-      await writeJsonAtomic(modelsJsonPath, modelsConfig);
-    } catch (e) {
-      console.error("[setupCustomProviders error]:", e);
+      key = decryptProviderKey(ciphertext);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error("[agent] provider key decrypt failed:", message);
+      return { ok: false, error: "Provider key payload is invalid" };
     }
+    this.cloudEchogateKey = key;
+    // Re-arm an already-created runtime; otherwise the next ensureRuntime()
+    // picks the key up on construction.
+    if (this.modelRuntime) {
+      this.registerEchoGateProvider(this.modelRuntime, this.effectiveEchogateKey());
+      await this.syncRuntimeApiKey(
+        this.modelRuntime,
+        "echogate",
+        this.effectiveEchogateKey(),
+      );
+    }
+    return { ok: true };
   }
 
   private async ensureRuntime(): Promise<ModelRuntime> {
     ensureHttpDispatcher();
-    const GOOGLE_API_KEY = googleApiKey();
-    const NVIDIA_API_KEY = nvidiaApiKey();
+    const echogateKey = this.effectiveEchogateKey();
     if (this.modelRuntime) {
-      // Always refresh runtime key (user may have rotated nvapi-…)
-      await this.modelRuntime.setRuntimeApiKey("nvidia", NVIDIA_API_KEY);
-      await this.modelRuntime.setRuntimeApiKey("google", GOOGLE_API_KEY);
+      this.registerEchoGateProvider(this.modelRuntime, echogateKey);
+      await this.syncRuntimeApiKey(this.modelRuntime, "echogate", echogateKey);
       return this.modelRuntime;
     }
-    // Two concurrent callers would both write auth.json/models.json and could
-    // interleave into a corrupt file — share the first in-flight creation.
+    // Share runtime construction so concurrent status/prompt calls do not
+    // create competing SDK instances and file watchers.
     if (this.runtimePromise) return this.runtimePromise;
-    this.runtimePromise = this.createRuntime(GOOGLE_API_KEY, NVIDIA_API_KEY);
+    this.runtimePromise = this.createRuntime(echogateKey);
     try {
       return await this.runtimePromise;
     } finally {
@@ -931,121 +938,81 @@ export class AgentService {
     }
   }
 
-  private async createRuntime(
-    googleKey: string,
-    nvidiaKey: string,
-  ): Promise<ModelRuntime> {
+  /**
+   * `setRuntimeApiKey` alone only stores a credential; auth resolution for a
+   * request still needs "echogate" to exist as a provider, so an unregistered
+   * id fails with pi's "No API key found" at prompt time. Registration also
+   * carries the key: pi resolves custom-provider keys from the provider
+   * config (see providers.md → Resolution Order).
+   */
+  private registerEchoGateProvider(runtime: ModelRuntime, key: string): void {
+    if (this.registeredEchogateKey === key) return;
+    runtime.registerProvider("echogate", {
+      name: "EchoGate",
+      baseUrl: ECHOGATE_BASE_URL,
+      api: "openai-completions",
+      authHeader: true,
+      ...(key.trim() ? { apiKey: key } : {}),
+      models: MODEL_CATALOG.map((m) => ({
+        id: m.id,
+        name: `${m.name} ${m.version}`,
+        reasoning: false,
+        input: (m.supportsImages ? ["text", "image"] : ["text"]) as Array<
+          "text" | "image"
+        >,
+        cost: ZERO_COST,
+        contextWindow: m.contextWindow,
+        maxTokens: m.maxTokens,
+        compat: ECHOGATE_COMPAT,
+      })),
+    });
+    this.registeredEchogateKey = key;
+  }
+
+  private async syncRuntimeApiKey(
+    runtime: ModelRuntime,
+    provider: string,
+    key: string,
+  ): Promise<void> {
+    if (key.trim()) {
+      await runtime.setRuntimeApiKey(provider, key);
+      return;
+    }
+    // ModelRuntime treats even an empty override as configured. Remove only
+    // our ephemeral layer and let pi-owned OAuth/API credentials remain intact.
+    if (runtime.getProviderAuthStatus(provider).source === "runtime") {
+      await runtime.removeRuntimeApiKey(provider);
+    }
+  }
+
+  private async createRuntime(echogateKey: string): Promise<ModelRuntime> {
     const agentDir = getPiAgentDir();
     try {
       await mkdir(agentDir, { recursive: true });
     } catch {
       // ok
     }
-    await this.setupCustomProviders(agentDir);
     const runtime = await ModelRuntime.create({
       authPath: join(agentDir, "auth.json"),
       modelsPath: join(agentDir, "models.json"),
       modelsStorePath: join(agentDir, "models-store.json"),
     });
-    await runtime.setRuntimeApiKey("google", googleKey);
-    await runtime.setRuntimeApiKey("nvidia", nvidiaKey);
+    this.registerEchoGateProvider(runtime, echogateKey);
+    await this.syncRuntimeApiKey(runtime, "echogate", echogateKey);
     this.modelRuntime = runtime;
     return runtime;
   }
 
-  /**
-   * Resolve picker id → model for createAgentSession.
-   * NVIDIA body.model is EXACTLY the picker id (e.g. deepseek-ai/deepseek-v4-pro).
-   * Always force baseUrl — empty baseUrl from models-store causes 404 on wrong host.
-   */
+  /** Resolve a picker id to an explicit EchoGate OpenAI-compatible model. */
   private async resolveModel(
-    modelRuntime: ModelRuntime,
+    _modelRuntime: ModelRuntime,
     modelId: string | null,
   ): Promise<any | undefined> {
     if (!modelId) return undefined;
-    const id = modelId.trim();
-    if (!id) return undefined;
-
-    // Accept `provider/id` from the picker as well as the bare catalog id.
-    const catalogId = findModel(id)?.id ?? id;
-
-    // Prefer our explicit NIM models (correct id + baseUrl + compat)
-    if (NVIDIA_MODELS[catalogId]) {
-      const hard = { ...NVIDIA_MODELS[catalogId] };
-      // Merge any richer built-in metadata if present, but never lose id/baseUrl
-      const builtin = modelRuntime.getModel("nvidia", catalogId);
-      if (builtin) {
-        return {
-          ...builtin,
-          id: catalogId,
-          provider: "nvidia",
-          baseUrl: NVIDIA_BASE_URL,
-          api: "openai-completions",
-          headers: {
-            ...(builtin.headers ?? {}),
-            ...(hard.headers as Record<string, string>),
-          },
-          compat: { ...(builtin.compat ?? {}), ...NVIDIA_COMPAT },
-        };
-      }
-      return hard;
-    }
-
-    const entry = findModel(catalogId);
-
-    if (entry?.provider === "anthropic") {
-      // pi ships the real Anthropic descriptors (cost, thinking levels, compat)
-      // and composes auth from ~/.pi/agent/auth.json — an OAuth credential from
-      // `pi auth` is picked up here without beide ever touching the token.
-      // The literal below is only a fallback for a cold models-store.
-      return (
-        modelRuntime.getModel("anthropic", entry.id) ?? {
-          id: entry.id,
-          name: `${entry.name} ${entry.version}`,
-          api: "anthropic-messages",
-          provider: "anthropic",
-          baseUrl: ANTHROPIC_BASE_URL,
-          reasoning: true,
-          input: ["text", "image"],
-          cost: ZERO_COST,
-          contextWindow: entry.contextWindow,
-          maxTokens: entry.maxTokens,
-        }
-      );
-    }
-
-    if (entry?.provider === "google") {
-      return (
-        modelRuntime.getModel("google", entry.id) ?? {
-          id: entry.id,
-          name: `${entry.name} ${entry.version}`,
-          api: "google-generative-ai",
-          provider: "google",
-          baseUrl: GOOGLE_BASE_URL,
-          reasoning: false,
-          input: entry.supportsImages ? ["text", "image"] : ["text"],
-          cost: ZERO_COST,
-          contextWindow: entry.contextWindow,
-          maxTokens: entry.maxTokens,
-        }
-      );
-    }
-
-    if (entry?.provider === "xai") {
-      return (
-        modelRuntime.getModel("xai", entry.id) ??
-        modelRuntime.getModel("xai", XAI_FALLBACK_MODEL)
-      );
-    }
-
-    const available = await modelRuntime.getAvailable();
-    const found = available.find(
-      (m) => m.id === catalogId || `${m.provider}/${m.id}` === catalogId,
-    );
-    if (found?.provider === "nvidia") {
-      return { ...found, baseUrl: NVIDIA_BASE_URL || found.baseUrl };
-    }
-    return found;
+    const catalogId = findModel(modelId)?.id;
+    return catalogId && ECHOGATE_MODELS[catalogId]
+      ? { ...ECHOGATE_MODELS[catalogId] }
+      : undefined;
   }
 
   private async ensureSession(): Promise<void> {
@@ -1069,18 +1036,14 @@ export class AgentService {
     const agentDir = getPiAgentDir();
     const modelRuntime = await this.ensureRuntime();
 
-    // .env keys are no longer the only way in: a `pi auth login` (Anthropic
-    // subscription, xAI) is a working credential too, so warn only when there
-    // is no provider at all.
-    const providers = await readProviderStatus();
-    if (!providers.some((p) => p.connected)) {
+    const providers = this.providerStatuses(modelRuntime);
+    if (!providers.some((provider) => provider.connected)) {
       console.error(
-        "[agent] no provider credentials — set BEIDE_GOOGLE_API_KEY / BEIDE_NVIDIA_API_KEY in .env or run `pi auth login`",
+        "[agent] no provider credentials — cloud key not delivered yet (sign in) and no BEIDE_ECHOGATE_API_KEY dev override",
       );
       this.emit({
         type: "beide:warning",
-        message:
-          "Нет доступных провайдеров. Укажите ключи в .env (BEIDE_GOOGLE_API_KEY, BEIDE_NVIDIA_API_KEY) или войдите через `pi auth login` и перезапустите IDE.",
+        message: "Ключ провайдера ещё не получен из облака. Проверьте вход в аккаунт и подключение к сети.",
       });
     }
 
@@ -1089,14 +1052,27 @@ export class AgentService {
     }
 
     const requestedModelId = this.selectedModelId;
-    let model = await this.resolveModel(modelRuntime, requestedModelId);
+    const connected = new Set(
+      providers.filter((provider) => provider.connected).map((provider) => provider.id),
+    );
+    const requestedEntry = findModel(requestedModelId);
+    const connectedFallback = MODEL_CATALOG.find((entry) => connected.has(entry.provider));
+    const effectiveModelId =
+      requestedEntry && !connected.has(requestedEntry.provider) && connectedFallback
+        ? connectedFallback.id
+        : requestedModelId;
+    let model = await this.resolveModel(modelRuntime, effectiveModelId);
+
+    if (effectiveModelId !== requestedModelId && model) {
+      this.emit({
+        type: "beide:warning",
+        message: `Провайдер модели ${requestedModelId} не подключён — работаю на ${model.id}.`,
+      });
+    }
 
     if (!model) {
       console.warn(`[agent] model not found: ${requestedModelId}`);
-      model =
-        (await this.resolveModel(modelRuntime, PREFERRED_MODEL)) ??
-        (await this.resolveModel(modelRuntime, "deepseek-ai/deepseek-v4-pro")) ??
-        modelRuntime.getModel("xai", XAI_FALLBACK_MODEL);
+      model = await this.resolveModel(modelRuntime, PREFERRED_MODEL);
       // The picker silently snapped back to the fallback and looked like the
       // choice had been ignored — say out loud that the pick was unavailable.
       if (model) {
@@ -1108,8 +1084,7 @@ export class AgentService {
     }
 
     if (model) {
-      this.modelLabel =
-        model.provider === "xai" ? `xai/${model.id}` : model.id;
+      this.modelLabel = model.id;
       this.modelSupportsImages = Array.isArray(model.input) && model.input.includes("image");
       console.log(
         `[agent] request model=${JSON.stringify(model.id)} baseUrl=${model.baseUrl ?? ""} provider=${model.provider} images=${this.modelSupportsImages}`,
@@ -1125,8 +1100,10 @@ export class AgentService {
       retry: {
         enabled: true,
         provider: {
-          // NIM cold start can exceed default idle timeouts
-          timeoutMs: 180_000,
+          // Generous for slow generations, but not so long that a hung
+          // gateway looks like endless "thinking" — 180s × 2 retries kept
+          // users staring at a shimmer for ~9 minutes during an outage.
+          timeoutMs: 90_000,
           maxRetries: 2,
         },
       },
@@ -1193,6 +1170,14 @@ export class AgentService {
       settingsManager,
     });
 
+    const restoredMessages =
+      this.pendingRuntimeMessages ?? transcriptToAgentMessages(this.pendingTranscript, model);
+    if (restoredMessages.length) {
+      session.agent.state.messages = [...restoredMessages];
+    }
+    this.pendingRuntimeMessages = null;
+    this.pendingTranscript = [];
+
     this.session = session;
 
     if (modelFallbackMessage) {
@@ -1214,6 +1199,29 @@ export class AgentService {
         }
         if (t === "agent_end" || t === "agent_settled") {
           this.streaming = false;
+        }
+        // Billing charges what the provider actually metered, not the
+        // renderer's chars/3.2 guess — every assistant message carries its
+        // real usage.
+        if (t === "message_end") {
+          const message = (
+            event as {
+              message?: {
+                role?: string;
+                usage?: { input?: number; output?: number; totalTokens?: number };
+              };
+            }
+          ).message;
+          if (message?.role === "assistant" && message.usage) {
+            const u = message.usage;
+            const total =
+              typeof u.totalTokens === "number" && Number.isFinite(u.totalTokens) && u.totalTokens > 0
+                ? u.totalTokens
+                : (Number(u.input) || 0) + (Number(u.output) || 0);
+            if (total > 0) {
+              this.emit({ type: "beide:usage", tokens: Math.round(total) });
+            }
+          }
         }
       }
     });
@@ -1340,132 +1348,11 @@ export class AgentService {
           env?: NodeJS.ProcessEnv;
         },
       ) => {
-        // Plan mode: allow only a small readonly-ish whitelist. Anything else is blocked.
+        // Plan mode has a deliberately tiny, separately tested shell grammar.
         if (this.mode === "plan") {
-          const trimmed = command.trim();
-          const firstToken = trimmed.split(/\s+/)[0]?.toLowerCase() ?? "";
-          // Map cmd.exe builtins to their target command
-          const cmd = firstToken.replace(/\.exe$/i, "");
-          // Package-manager binaries are deliberately absent: `npx <pkg>`,
-          // `npm run`, `bun x` and `deno run` all execute arbitrary code, which
-          // is exactly what plan mode exists to prevent. `awk` is out for the
-          // same reason (system()/print > file).
-          const READONLY_COMMANDS = new Set([
-            "ls", "dir", "cat", "type", "head", "tail", "less", "more",
-            "grep", "rg", "findstr", "find", "where", "which", "echo",
-            "pwd", "cd", "pushd", "popd", "tree",
-            "git",  // git itself is allowed; mutating subcommands blocked below
-            "wc", "sort", "uniq", "cut",
-          ]);
-          // Subcommands that mutate — block even on otherwise-allowed binaries
-          const MUTATING_SUBCOMMANDS = new Set([
-            "install", "i", "add", "remove", "rm", "uninstall", "un",
-            "publish", "run", "exec", "execute", "explore",
-            "commit", "push", "pull", "merge", "rebase", "cherry-pick",
-            "reset", "clean", "checkout", "switch", "branch",
-            "write", "delete", "del", "format",
-            "config", "tag", "stash", "notes",
-          ]);
-          const READONLY_GIT_SUBCOMMANDS = new Set([
-            "status", "diff", "show", "log", "rev-parse", "ls-files",
-            "ls-tree", "grep", "blame", "shortlog", "describe", "remote",
-          ]);
-          if (!READONLY_COMMANDS.has(cmd)) {
-            const msg = Buffer.from(
-              `Blocked in plan mode: "${firstToken}" is not in the readonly whitelist. Switch to Agent mode.\n`,
-            );
-            options.onData(msg);
-            return { exitCode: 1 };
-          }
-          // Block mutating subcommands on allowed binaries
-          const subcommand = trimmed.split(/\s+/)[1]?.replace(/^:/, "").toLowerCase() ?? "";
-          if (cmd === "git" && !READONLY_GIT_SUBCOMMANDS.has(subcommand)) {
-            const msg = Buffer.from(
-              `Blocked in plan mode: git subcommand "${subcommand || "(missing)"}" is not readonly.\n`,
-            );
-            options.onData(msg);
-            return { exitCode: 1 };
-          }
-          if (MUTATING_SUBCOMMANDS.has(subcommand)) {
-            const msg = Buffer.from(
-              `Blocked in plan mode: "${firstToken} ${subcommand}" looks mutating. Switch to Agent mode.\n`,
-            );
-            options.onData(msg);
-            return { exitCode: 1 };
-          }
-          // Flags that make an otherwise-readonly binary write a file or run a
-          // program: `sort -o out`, `tree -o out`, `uniq in out`,
-          // `git log --output=f`, `git grep -O<pager>`, `rg --pre <cmd>`.
-          if (
-            (cmd === "sort" || cmd === "tree") &&
-            /(^|\s)(-o\b|--output(=|\b)|\/o\b)/i.test(trimmed)
-          ) {
-            options.onData(
-              Buffer.from(
-                `Blocked in plan mode: "${cmd}" with an output flag writes a file. Switch to Agent mode.\n`,
-              ),
-            );
-            return { exitCode: 1 };
-          }
-          if (cmd === "uniq" && /^\S+(?:\s+-\S+)*\s+[^-\s]\S*\s+[^-\s]\S*/.test(trimmed)) {
-            options.onData(
-              Buffer.from(
-                "Blocked in plan mode: uniq with a second positional argument writes a file. Switch to Agent mode.\n",
-              ),
-            );
-            return { exitCode: 1 };
-          }
-          if (cmd === "rg" && /(^|\s)(--pre\b|--hostname-bin\b)/.test(trimmed)) {
-            options.onData(
-              Buffer.from(
-                "Blocked in plan mode: rg --pre executes a program. Switch to Agent mode.\n",
-              ),
-            );
-            return { exitCode: 1 };
-          }
-          if (
-            cmd === "git" &&
-            /(^|\s)(--output(=|\b)|-O\S*|--open-files-in-pager(=|\b)|--exec-path(=|\b)|-c\b|--config-env(=|\b)|--upload-pack(=|\b)|--receive-pack(=|\b))/.test(
-              trimmed,
-            )
-          ) {
-            options.onData(
-              Buffer.from(
-                "Blocked in plan mode: git flag that writes a file or executes a program. Switch to Agent mode.\n",
-              ),
-            );
-            return { exitCode: 1 };
-          }
-          // A whitelist for only the first token is bypassable with a second shell command.
-          if (/[;&|\r\n]|`|\$\(/.test(command)) {
-            const msg = Buffer.from(
-              "Blocked in plan mode: command chaining is not allowed. Switch to Agent mode.\n",
-            );
-            options.onData(msg);
-            return { exitCode: 1 };
-          }
-          // Block shell redirections that write to disk
-          if (command.includes(">>") || /[^|=>]\s*>\s*[^|]/.test(command)) {
-            const msg = Buffer.from(
-              "Blocked in plan mode: file redirection detected. Switch to Agent mode.\n",
-            );
-            options.onData(msg);
-            return { exitCode: 1 };
-          }
-          // Block pipes to shell interpreters — prevents command injection
-          if (/\|\s*(sh|bash|zsh|pwsh|powershell|cmd|python|node|npx)\b/i.test(command)) {
-            const msg = Buffer.from(
-              "Blocked in plan mode: pipe to shell interpreter detected. Switch to Agent mode.\n",
-            );
-            options.onData(msg);
-            return { exitCode: 1 };
-          }
-          // `find` is readonly only without its action flags.
-          if (cmd === "find" && /(^|\s)-(exec|execdir|ok|okdir|delete)\b/.test(command)) {
-            const msg = Buffer.from(
-              "Blocked in plan mode: find action flags (-exec/-delete) mutate. Switch to Agent mode.\n",
-            );
-            options.onData(msg);
+          const rejection = validatePlanCommand(command);
+          if (rejection) {
+            options.onData(Buffer.from(`${rejection} Switch to Agent mode.\n`));
             return { exitCode: 1 };
           }
         }
@@ -1487,9 +1374,11 @@ export class AgentService {
 
         // pi hands us `{...process.env}` here, so the model could just echo the
         // provider keys back out of the shell it drives.
+        const safeEnv = stripSecretEnv(options.env ?? process.env);
+        if (this.mode === "plan") safeEnv.GIT_OPTIONAL_LOCKS = "0";
         return localBash.exec(command, bashCwd, {
           ...options,
-          env: stripSecretEnv(options.env ?? process.env),
+          env: safeEnv,
         });
       },
     };
@@ -1710,14 +1599,20 @@ export class AgentService {
     ];
   }
 
-  private async teardownSession(): Promise<void> {
+  private async teardownSession(options?: {
+    preserveRuntimeMessages?: boolean;
+    reason?: string;
+  }): Promise<void> {
     this.flushStreamBuffer();
-    this.permissions.cancelAll("workspace change");
+    this.permissions.cancelAll(options?.reason ?? "session teardown");
     if (this.unsubscribe) {
       this.unsubscribe();
       this.unsubscribe = null;
     }
     if (this.session) {
+      if (options?.preserveRuntimeMessages) {
+        this.pendingRuntimeMessages = [...this.session.messages];
+      }
       try {
         await this.session.abort();
       } catch {
@@ -1734,7 +1629,7 @@ export class AgentService {
   }
 
   async dispose(): Promise<void> {
-    await this.teardownSession();
+    await this.teardownSession({ reason: "application shutdown" });
     this.modelRuntime = null;
   }
 }
@@ -1745,17 +1640,15 @@ export class AgentService {
  * that looks like a credential is stripped before spawn.
  */
 const SECRET_ENV_KEYS = new Set([
-  "BEIDE_GOOGLE_API_KEY",
-  "BEIDE_NVIDIA_API_KEY",
+  "BEIDE_ECHOGATE_API_KEY",
   "BEIDE_ADMIN_EMAIL",
   "BEIDE_ADMIN_PASSWORD",
-  "GEMINI_API_KEY",
-  "NVIDIA_API_KEY",
   "SUPABASE_SERVICE_ROLE_KEY",
 ]);
 const SECRET_ENV_RE = /_API_KEY$|_KEY$|TOKEN|SECRET|PASSWORD|PASSWD/i;
 
-function stripSecretEnv(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+/** Shared with the PTY terminal — any user-visible shell gets the same env hygiene. */
+export function stripSecretEnv(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...source };
   for (const key of Object.keys(env)) {
     if (SECRET_ENV_KEYS.has(key) || SECRET_ENV_RE.test(key)) delete env[key];

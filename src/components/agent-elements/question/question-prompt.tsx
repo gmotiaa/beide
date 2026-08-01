@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { cn } from "../utils/cn";
 
 export type QuestionOption = {
@@ -58,15 +59,16 @@ export function QuestionPrompt({
   totalQuestions,
   onPreviousQuestion,
   onNextQuestion,
-  submitLabel = "Send",
-  nextLabel = "Next",
-  skipLabel = "Skip",
+  submitLabel,
+  nextLabel,
+  skipLabel,
   allowSkip = true,
   initialAnswer,
   onSubmit,
   onSkip,
   className,
 }: QuestionPromptProps) {
+  const { t } = useTranslation();
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [customText, setCustomText] = useState("");
   const [textValue, setTextValue] = useState("");
@@ -79,7 +81,10 @@ export function QuestionPrompt({
   const canGoPrev = clampedIndex > 1;
   const canGoNext = clampedIndex < resolvedTotal;
   const isLastQuestion = clampedIndex >= resolvedTotal;
-  const primaryLabel = isLastQuestion ? submitLabel : nextLabel;
+  const primaryLabel = isLastQuestion
+    ? (submitLabel ?? t("chat.send"))
+    : (nextLabel ?? t("agentElements.questionNext"));
+  const resolvedSkipLabel = skipLabel ?? t("agentElements.questionSkip");
 
   useEffect(() => {
     if (!initialAnswer || initialAnswer.kind === "skip") {
@@ -268,7 +273,8 @@ export function QuestionPrompt({
                     handleCustomTextChange(event.target.value)
                   }
                   placeholder={
-                    activeQuestion.customPlaceholder ?? "Type your answer"
+                    activeQuestion.customPlaceholder ??
+                    t("agentElements.questionAnswerPlaceholder")
                   }
                   className="w-full h-7 rounded-md border border-border bg-background px-2 text-sm text-an-tool-color"
                 />
@@ -281,7 +287,10 @@ export function QuestionPrompt({
         <textarea
           value={textValue}
           onChange={(event) => setTextValue(event.target.value)}
-          placeholder={activeQuestion.placeholder ?? "Type your answer"}
+          placeholder={
+            activeQuestion.placeholder ??
+            t("agentElements.questionAnswerPlaceholder")
+          }
           rows={3}
           className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm text-an-tool-color resize-y"
         />
@@ -302,7 +311,7 @@ export function QuestionPrompt({
                 disabled={!canGoPrev}
                 className="h-6 px-2 rounded-[4px] text-sm text-muted-foreground hover:text-an-tool-color disabled:opacity-60"
               >
-                Previous
+                {t("agentElements.questionPrevious")}
               </button>
             )}
             {onNextQuestion && (
@@ -312,7 +321,7 @@ export function QuestionPrompt({
                 disabled={!canGoNext}
                 className="h-6 px-2 rounded-[4px] text-sm text-muted-foreground hover:text-an-tool-color disabled:opacity-60"
               >
-                Next
+                {t("agentElements.questionNext")}
               </button>
             )}
           </div>
@@ -324,7 +333,7 @@ export function QuestionPrompt({
               onClick={handleSkip}
               className="h-6 px-2 rounded-[4px] text-sm text-muted-foreground hover:text-an-tool-color hover:bg-muted/50 active:scale-[0.98] transition-[background-color,color,transform] duration-150"
             >
-              {skipLabel}
+              {resolvedSkipLabel}
             </button>
           )}
           <button

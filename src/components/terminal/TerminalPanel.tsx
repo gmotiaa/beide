@@ -1,16 +1,18 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import { IconPlayerPlay, IconTrash, IconX } from "@tabler/icons-react";
+import { IconTrash, IconX } from "@tabler/icons-react";
+import { Terminal } from "@xterm/xterm";
+import { FitAddon } from "@xterm/addon-fit";
+import "@xterm/xterm/css/xterm.css";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Spinner } from "@/components/ui/spinner";
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { getBeide } from "../../lib/ipc";
+import { getBeide, onBeide } from "../../lib/ipc";
 import { useWorkspaceStore } from "../../stores/workspace";
 
 interface TerminalPanelProps {
@@ -18,142 +20,157 @@ interface TerminalPanelProps {
   onClose?: () => void;
 }
 
-interface TermLine {
-  kind: "cmd" | "out" | "err" | "meta";
-  text: string;
+/** xterm theme from the app's design tokens, resolved at mount time. */
+function themeFromCss(el: HTMLElement) {
+  const style = getComputedStyle(el);
+  const background = style.getPropertyValue("--background").trim() || "#111113";
+  const foreground = style.getPropertyValue("--foreground").trim() || "#e6e6e9";
+  return {
+    background,
+    foreground,
+    cursor: foreground,
+    selectionBackground: style.getPropertyValue("--primary").trim() || "#4c7dff",
+  };
 }
 
 /**
- * Command terminal via window.beide.shell.run (cmd.exe on Windows).
- * Not a full PTY — good enough for npm/git/python one-shots in v0.1.
+ * Real PTY terminal: @xterm/xterm in the renderer, ConPTY behind
+ * `terminal:*` IPC in main. Interactive programs and TUIs work; the shell is
+ * the system default (cmd.exe/COMSPEC on Windows).
+ *
+ * The component stays mounted while collapsed (hidden with display:none) so
+ * the shell session and scrollback survive toggling the panel.
  */
 export function TerminalPanel({ collapsed, onClose }: TerminalPanelProps) {
   const { t } = useTranslation();
   const rootPath = useWorkspaceStore((s) => s.rootPath);
-  const [lines, setLines] = useState<TermLine[]>([
-    { kind: "meta", text: t("terminal.welcome") },
-  ]);
-  const [input, setInput] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [history, setHistory] = useState<string[]>([]);
-  const [histIdx, setHistIdx] = useState(-1);
-  const scroller = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const mountRef = useRef<HTMLDivElement>(null);
+  const termRef = useRef<Terminal | null>(null);
+  const fitRef = useRef<FitAddon | null>(null);
+  const ptyIdRef = useRef<string | null>(null);
+  /** Set when the shell exited; the next keystroke starts a fresh one. */
+  const exitedRef = useRef(false);
+  const collapsedRef = useRef(Boolean(collapsed));
+  collapsedRef.current = Boolean(collapsed);
 
-  useEffect(() => {
-    scroller.current?.scrollTo({ top: scroller.current.scrollHeight });
-  }, [lines, collapsed]);
-
-  useEffect(() => {
-    if (!collapsed) {
-      requestAnimationFrame(() => inputRef.current?.focus());
-    }
-  }, [collapsed]);
-
-  const run = async (command: string) => {
-    const cmd = command.trim();
-    if (!cmd || busy) return;
-
-    setHistory((h) => (h[h.length - 1] === cmd ? h : [...h, cmd].slice(-80)));
-    setHistIdx(-1);
-    setLines((prev) => [...prev, { kind: "cmd", text: `$ ${cmd}` }]);
-    setInput("");
-
-    if (!rootPath) {
-      setLines((prev) => [
-        ...prev,
-        { kind: "err", text: t("terminal.noWorkspace") },
-      ]);
-      return;
-    }
-
+  const spawnShell = useCallback(async () => {
     const api = getBeide();
-    if (!api) {
-      setLines((prev) => [
-        ...prev,
-        { kind: "err", text: t("terminal.shellUnavailable") },
-      ]);
-      return;
-    }
-
-    setBusy(true);
+    const term = termRef.current;
+    if (!api || !term || ptyIdRef.current) return;
     try {
-      const result = await api.shell.run(cmd);
-      const next: TermLine[] = [];
-      if (result.stdout?.trim()) {
-        next.push({
-          kind: "out",
-          text: result.stdout.replace(/\r\n/g, "\n").replace(/\n$/, ""),
-        });
-      }
-      if (result.stderr?.trim()) {
-        next.push({
-          kind: "err",
-          text: result.stderr.replace(/\r\n/g, "\n").replace(/\n$/, ""),
-        });
-      }
-      if (!result.stdout?.trim() && !result.stderr?.trim()) {
-        next.push({ kind: "meta", text: t("terminal.noOutput") });
-      }
-      next.push({
-        kind: "meta",
-        text: `${t("terminal.exitCode")}: ${result.code}`,
-      });
-      setLines((prev) => [...prev, ...next]);
+      fitRef.current?.fit();
+      const { id } = await api.terminal.create(term.cols, term.rows);
+      ptyIdRef.current = id;
+      exitedRef.current = false;
     } catch (e) {
-      setLines((prev) => [
-        ...prev,
-        { kind: "err", text: e instanceof Error ? e.message : String(e) },
-      ]);
-    } finally {
-      setBusy(false);
-      requestAnimationFrame(() => inputRef.current?.focus());
+      term.writeln(
+        `\r\n\x1b[31m${e instanceof Error ? e.message : String(e)}\x1b[0m`,
+      );
     }
-  };
+  }, []);
 
-  const onKey = (e: KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      void run(input);
-      return;
-    }
-    if (e.key === "ArrowUp") {
-      e.preventDefault();
-      if (!history.length) return;
-      const next = histIdx < 0 ? history.length - 1 : Math.max(0, histIdx - 1);
-      setHistIdx(next);
-      setInput(history[next] ?? "");
-      return;
-    }
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      if (histIdx < 0) return;
-      const next = histIdx + 1;
-      if (next >= history.length) {
-        setHistIdx(-1);
-        setInput("");
-      } else {
-        setHistIdx(next);
-        setInput(history[next] ?? "");
+  // One terminal per panel lifetime; recreated only when the workspace changes.
+  useEffect(() => {
+    const mount = mountRef.current;
+    if (!mount || !rootPath) return;
+
+    const term = new Terminal({
+      fontSize: 13,
+      fontFamily:
+        '"Cascadia Mono", "JetBrains Mono", Consolas, "Courier New", monospace',
+      cursorBlink: true,
+      scrollback: 5_000,
+      theme: themeFromCss(mount),
+    });
+    const fit = new FitAddon();
+    term.loadAddon(fit);
+    term.open(mount);
+    termRef.current = term;
+    fitRef.current = fit;
+    fit.fit();
+
+    term.onData((data) => {
+      const api = getBeide();
+      if (!api) return;
+      if (exitedRef.current) {
+        // Shell died — any keystroke starts a new one instead of typing into
+        // a dead session.
+        term.clear();
+        void spawnShell();
+        return;
       }
-      return;
-    }
-    if (e.key === "l" && (e.ctrlKey || e.metaKey)) {
-      e.preventDefault();
-      setLines([]);
-    }
-  };
+      if (ptyIdRef.current) void api.terminal.write(ptyIdRef.current, data);
+    });
 
-  if (collapsed) {
-    return null;
-  }
+    const offData = onBeide("terminal:data", (...args: unknown[]) => {
+      const payload = args[0] as { id?: string; data?: string };
+      if (payload?.id === ptyIdRef.current && typeof payload.data === "string") {
+        term.write(payload.data);
+      }
+    });
+    const offExit = onBeide("terminal:exit", (...args: unknown[]) => {
+      const payload = args[0] as { id?: string; exitCode?: number };
+      if (payload?.id !== ptyIdRef.current) return;
+      ptyIdRef.current = null;
+      exitedRef.current = true;
+      term.writeln(
+        `\r\n\x1b[2m${t("terminal.exited", { code: payload.exitCode ?? 0 })}\x1b[0m`,
+      );
+    });
+
+    const observer = new ResizeObserver(() => {
+      // Fitting a display:none container computes 2×2 cells — skip while hidden.
+      if (collapsedRef.current) return;
+      fit.fit();
+      const api = getBeide();
+      if (api && ptyIdRef.current) {
+        void api.terminal.resize(ptyIdRef.current, term.cols, term.rows);
+      }
+    });
+    observer.observe(mount);
+
+    void spawnShell();
+
+    return () => {
+      observer.disconnect();
+      offData();
+      offExit();
+      const api = getBeide();
+      if (api && ptyIdRef.current) void api.terminal.kill(ptyIdRef.current);
+      ptyIdRef.current = null;
+      term.dispose();
+      termRef.current = null;
+      fitRef.current = null;
+    };
+    // `t` is deliberately not a dependency: re-creating the terminal on a
+    // language switch would kill the running shell.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rootPath, spawnShell]);
+
+  // Re-fit and focus when the panel is revealed.
+  useEffect(() => {
+    if (collapsed) return;
+    requestAnimationFrame(() => {
+      fitRef.current?.fit();
+      const api = getBeide();
+      const term = termRef.current;
+      if (api && term && ptyIdRef.current) {
+        void api.terminal.resize(ptyIdRef.current, term.cols, term.rows);
+      }
+      termRef.current?.focus();
+    });
+  }, [collapsed]);
 
   const cwdShort = rootPath
     ? rootPath.replace(/\\/g, "/").split("/").slice(-2).join("/")
     : null;
 
   return (
-    <section className="terminal-panel" aria-label={t("terminal.title")}>
+    <section
+      className="terminal-panel"
+      aria-label={t("terminal.title")}
+      style={collapsed ? { display: "none" } : undefined}
+    >
       <div className="terminal-panel__header">
         <div className="terminal-panel__title-row">
           <span className="terminal-panel__title">{t("terminal.title")}</span>
@@ -169,14 +186,6 @@ export function TerminalPanel({ collapsed, onClose }: TerminalPanelProps) {
               {t("status.noWorkspace")}
             </Badge>
           )}
-          {busy && (
-            <Badge
-              variant="secondary"
-              className="border-transparent bg-primary/10 text-primary"
-            >
-              {t("terminal.running")}
-            </Badge>
-          )}
         </div>
         <div className="terminal-panel__header-actions">
           <TooltipProvider delay={300}>
@@ -187,7 +196,7 @@ export function TerminalPanel({ collapsed, onClose }: TerminalPanelProps) {
                     variant="ghost"
                     size="icon-sm"
                     aria-label={t("terminal.clear")}
-                    onClick={() => setLines([])}
+                    onClick={() => termRef.current?.clear()}
                   />
                 }
               >
@@ -210,55 +219,11 @@ export function TerminalPanel({ collapsed, onClose }: TerminalPanelProps) {
           )}
         </div>
       </div>
-      <div className="terminal-panel__body" ref={scroller}>
+      <div className="terminal-panel__body terminal-panel__body--pty">
         {!rootPath && (
           <div className="term-meta">{t("terminal.noWorkspace")}</div>
         )}
-        {lines.map((line, i) => (
-          <div
-            key={`${i}-${line.kind}`}
-            className={
-              line.kind === "cmd"
-                ? "term-cmd"
-                : line.kind === "err"
-                  ? "term-err"
-                  : line.kind === "meta"
-                    ? "term-meta"
-                    : "term-out"
-            }
-          >
-            {line.text}
-          </div>
-        ))}
-        {busy && <div className="term-meta">…</div>}
-      </div>
-      <div className="terminal-panel__input-row">
-        <span className="terminal-panel__prompt">›</span>
-        <input
-          ref={inputRef}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={onKey}
-          placeholder={
-            rootPath ? t("terminal.placeholder") : t("terminal.noWorkspace")
-          }
-          disabled={busy || !rootPath}
-          spellCheck={false}
-          autoComplete="off"
-          autoCorrect="off"
-        />
-        <Button
-          size="sm"
-          disabled={busy || !rootPath || !input.trim()}
-          onClick={() => void run(input)}
-        >
-          {busy ? (
-            <Spinner size="sm" />
-          ) : (
-            <IconPlayerPlay size={14} stroke={2} />
-          )}
-          {t("terminal.run")}
-        </Button>
+        <div className="terminal-panel__xterm" ref={mountRef} />
       </div>
     </section>
   );

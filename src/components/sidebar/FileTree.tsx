@@ -176,7 +176,7 @@ function TreeItem({
             aria-expanded={isFolder ? expanded : undefined}
             title={node.path}
             style={{ paddingLeft: depth * INDENT }}
-            className="group z-10 w-full outline-hidden select-none py-0.5 focus-visible:ring-1 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:rounded-md"
+            className="group z-10 w-full outline-hidden select-none py-0.5 focus-visible:rounded-md focus-visible:[box-shadow:var(--focus-ring)]"
             onClick={onClick}
           >
             <span
@@ -220,20 +220,20 @@ function TreeItem({
                 void openFile(node.path);
               }}
             >
-              <IconFolderOpen size={14} className="mr-1.5" />
+              <IconFolderOpen className="mr-1.5 size-3.5" />
               {t("fileTree.openFile")}
             </ContextMenuItem>
           )}
           <ContextMenuItem onClick={() => onRename(node)}>
-            <IconEdit size={14} className="mr-1.5" />
+            <IconEdit className="mr-1.5 size-3.5" />
             {t("fileTree.rename")}
           </ContextMenuItem>
           <ContextMenuItem onClick={() => onCopyPath(node.path)}>
-            <IconCopy size={14} className="mr-1.5" />
+            <IconCopy className="mr-1.5 size-3.5" />
             {t("fileTree.copyPath")}
           </ContextMenuItem>
           <ContextMenuItem onClick={() => onRevealInFolder(node.path)}>
-            <IconFolderOpen size={14} className="mr-1.5" />
+            <IconFolderOpen className="mr-1.5 size-3.5" />
             {t("fileTree.reveal")}
           </ContextMenuItem>
           <ContextMenuSeparator />
@@ -241,7 +241,7 @@ function TreeItem({
             variant="destructive"
             onClick={() => onDelete(node)}
           >
-            <IconTrash size={14} className="mr-1.5" />
+            <IconTrash className="mr-1.5 size-3.5" />
             {t("fileTree.delete")}
           </ContextMenuItem>
         </ContextMenuContent>
@@ -275,12 +275,20 @@ export function FileTree() {
   const deletePath = useWorkspaceStore((s) => s.deletePath);
   const renamePath = useWorkspaceStore((s) => s.renamePath);
   const revealInFolder = useWorkspaceStore((s) => s.revealInFolder);
+  const editorTabs = useEditorStore((s) => s.tabs);
 
   const [deleteTarget, setDeleteTarget] = useState<FileNode | null>(null);
   const [renameTarget, setRenameTarget] = useState<FileNode | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const dirtyDeleteCount = deleteTarget
+    ? editorTabs.filter((tab) => {
+        const candidate = tab.path.replace(/\\/g, "/");
+        const root = deleteTarget.path.replace(/\\/g, "/").replace(/\/+$/, "");
+        return tab.dirty && (candidate === root || candidate.startsWith(`${root}/`));
+      }).length
+    : 0;
 
   const handleCopyPath = useCallback(async (path: string) => {
     try {
@@ -309,11 +317,14 @@ export function FileTree() {
   }, []);
 
   const confirmDelete = async () => {
+    if (busy) return;
     if (!deleteTarget) return;
     setBusy(true);
     setError(null);
     try {
-      await deletePath(deleteTarget.path);
+      // The confirmation dialog explicitly warns about every affected dirty
+      // buffer, so this call is the user's discard decision.
+      await deletePath(deleteTarget.path, true);
       setDeleteTarget(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -323,6 +334,9 @@ export function FileTree() {
   };
 
   const confirmRename = async () => {
+    // Enter in the dialog input is not disabled by `busy` the way the Save
+    // button is — two quick Enters raced the same rename.
+    if (busy) return;
     if (!renameTarget || !renameValue.trim()) return;
     setBusy(true);
     setError(null);
@@ -398,6 +412,11 @@ export function FileTree() {
             <p className="mt-2 font-mono text-sm text-foreground break-all">
               {deleteTarget?.path}
             </p>
+            {dirtyDeleteCount > 0 && (
+              <p className="mt-3 text-sm font-medium text-destructive">
+                {t("fileTree.deleteUnsavedWarning", { count: dirtyDeleteCount })}
+              </p>
+            )}
             {error && <p className="mt-2 text-sm text-destructive">{error}</p>}
           </div>
           <DialogFooter>

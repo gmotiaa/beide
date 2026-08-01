@@ -24,8 +24,18 @@ files:
 asar: true
 # pi resolves paths inside its own package at runtime and spawns helpers, so it
 # has to sit on the real filesystem instead of inside the asar archive.
+# @lydell/node-pty loads a native .node binary + conpty helper the same way.
 asarUnpack:
   - node_modules/@earendil-works/**
+  - node_modules/@lydell/**
+
+# Auto-update feed (electron-updater, generic provider). The URL must serve
+# latest.yml + the artifacts from `npm run package:win` — upload them there on
+# every release (electron-builder --publish also can). Placeholder until real
+# hosting exists; the updater fails silently when the feed is unreachable.
+publish:
+  provider: generic
+  url: https://beide.by/updates
 
 win:
   icon: build/icon.ico

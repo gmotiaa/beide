@@ -1,4 +1,3 @@
-import { Link } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
 
 import AsciiFire from "@/components/originkit/ascii-flame";
@@ -52,10 +51,10 @@ export default function NotFound() {
             видно всё остальное.
           </p>
           <Button asChild size="lg">
-            <Link to="/">
+            <a href="/">
               <ArrowLeft />
               На главную
-            </Link>
+            </a>
           </Button>
         </div>
       </Container>

@@ -112,9 +112,9 @@ export const FEATURES: Feature[] = [
   },
   {
     id: "providers",
-    title: "Несколько провайдеров моделей",
+    title: "Модели EchoGate",
     description:
-      "Anthropic и xAI подключаются через pi auth login, NVIDIA и Google — ключами в .env. Ключи хранятся вне репозитория, в профиле пользователя.",
+      "EchoGate подключается ключом из локального .env. Ключ остаётся вне репозитория и передаётся только API-провайдеру.",
     icon: "KeyRound",
     tag: "Модели",
   },
@@ -182,16 +182,18 @@ export type ModelRow = {
 };
 
 export const MODELS: ModelRow[] = [
-  { name: "Claude Opus", version: "5", provider: "Anthropic", context: "1M", images: true },
-  { name: "Claude Sonnet", version: "5", provider: "Anthropic", context: "1M", images: true },
-  { name: "Claude Haiku", version: "4.5", provider: "Anthropic", context: "200K", images: true },
-  { name: "MiniMax", version: "M3", provider: "NVIDIA", context: "128K", images: true },
-  { name: "GLM", version: "5.2", provider: "NVIDIA", context: "128K", images: false },
-  { name: "Nemotron", version: "3 Ultra", provider: "NVIDIA", context: "128K", images: false },
-  { name: "Kimi", version: "K2.6", provider: "NVIDIA", context: "128K", images: true },
-  { name: "DeepSeek", version: "V4 Pro", provider: "NVIDIA", context: "128K", images: false },
-  { name: "Gemini", version: "3.5 Flash", provider: "Google", context: "1M", images: true },
-  { name: "Grok", version: "4.5", provider: "xAI", context: "256K", images: false },
+  { name: "GPT", version: "5.6 Luna", provider: "EchoGate", context: "128K", images: false },
+  { name: "GPT", version: "5.6 Terra", provider: "EchoGate", context: "128K", images: false },
+  { name: "GPT", version: "5.6 Sol", provider: "EchoGate", context: "128K", images: false },
+  { name: "Claude Sonnet", version: "5", provider: "EchoGate", context: "128K", images: false },
+  { name: "Claude Opus", version: "4.8", provider: "EchoGate", context: "128K", images: false },
+  { name: "Claude Fable", version: "5", provider: "EchoGate", context: "128K", images: false },
+  { name: "Grok", version: "4.5", provider: "EchoGate", context: "128K", images: false },
+  { name: "GPT", version: "5.5", provider: "EchoGate", context: "128K", images: false },
+  { name: "Gemini", version: "3.6 Flash", provider: "EchoGate", context: "128K", images: false },
+  { name: "Gemini", version: "3.1 Pro Preview", provider: "EchoGate", context: "128K", images: false },
+  { name: "GLM", version: "5.2", provider: "EchoGate", context: "128K", images: false },
+  { name: "Kimi", version: "K2.7 Code", provider: "EchoGate", context: "128K", images: false },
 ];
 
 export type Step = { n: string; title: string; body: string };
@@ -237,7 +239,7 @@ export const FAQ: FaqItem[] = [
   },
   {
     q: "Где хранятся ключи?",
-    a: "Anthropic и xAI — в профиле pi (~/.pi/agent), NVIDIA и Google — в .env рядом с проектом. В репозиторий ключи не попадают, IDE их не пересылает никуда, кроме самого провайдера.",
+    a: "Ключ EchoGate хранится в локальном .env рядом с проектом. В репозиторий он не попадает, IDE отправляет его только EchoGate.",
   },
   {
     q: "Может ли агент сломать проект?",
@@ -283,7 +285,7 @@ export const CHANGELOG: ChangelogEntry[] = [
       { kind: "add", text: "Редактор Monaco, вкладки и дерево файлов" },
       { kind: "add", text: "Упоминания @file и @folder, вложения-картинки" },
       { kind: "add", text: "Встроенный терминал поверх shell:run" },
-      { kind: "add", text: "Каталог моделей: Anthropic, NVIDIA, Google, xAI" },
+      { kind: "add", text: "Каталог моделей EchoGate" },
       { kind: "add", text: "Темы dark, light, midnight и интерфейс на RU и EN" },
       { kind: "add", text: "Правила проекта через BEIDE.md и .beide/rules.md" },
     ],
@@ -319,18 +321,13 @@ export const DOCS: DocSection[] = [
   {
     id: "auth",
     title: "Подключение моделей",
-    blurb: "Anthropic и xAI — через pi, NVIDIA и Google — через .env.",
+    blurb: "EchoGate подключается ключом в локальном .env.",
     blocks: [
       {
-        heading: "Anthropic и xAI",
-        text: "Авторизация идёт через профиль pi. Ключи и токены сохраняются в ~/.pi/agent и остаются вне репозитория.",
+        heading: "EchoGate",
+        text: "Скопируйте .env.example в .env и добавьте BEIDE_ECHOGATE_API_KEY. Файл .env уже в .gitignore.",
       },
-      { code: "npx pi auth login" },
-      {
-        heading: "NVIDIA и Google",
-        text: "Скопируйте .env.example в .env и заполните нужные ключи. Файл .env уже в .gitignore.",
-      },
-      { code: "NVIDIA_API_KEY=...\nGOOGLE_API_KEY=..." },
+      { code: "BEIDE_ECHOGATE_API_KEY=forge_..." },
       {
         heading: "Что важно",
         list: [
@@ -404,7 +401,7 @@ export const DOCS: DocSection[] = [
     blocks: [
       {
         list: [
-          "Модель не отвечает — проверьте, что ключ провайдера подключён: npx pi auth login или .env",
+          "Модель не отвечает — проверьте BEIDE_ECHOGATE_API_KEY в локальном .env",
           "Агент не видит файл — упомяните его явно через @file, а не описанием «тот файл со стилями»",
           "Команда висит — это не PTY: интерактивные TUI в встроенном терминале не работают",
           "Правки не применяются — посмотрите, не остался ли включённым режим Plan",

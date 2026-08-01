@@ -1,8 +1,11 @@
 # Supabase backend
 
-The cloud account, plan limits and token billing live here. Everything is
-optional: without `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` the app falls
-back to local usage counters (`src/stores/usage.ts`, source `"local"`).
+The cloud account, plan limits, token billing and the encrypted model-provider
+key live here. The account is mandatory: the app gates behind sign-in
+(`AuthGate`) and there are no local usage counters — `spend_tokens` /
+`get_billing` are the only ledger. The public URL + anon key are baked into
+`src/lib/supabase.ts`; `VITE_SUPABASE_*` env vars only override them for
+another stack.
 
 ## Layout
 
@@ -22,6 +25,10 @@ escalation hole open). Migrations replaced it.
 | `20260726145524_billing_config_and_usage_events` | `app_config`, append-only `usage_events`, `app_flag()` |
 | `20260726145619_harden_billing_functions` | every function pinned to `search_path = ''`, demo gate, `get_usage_history()`, email-sync trigger |
 | `20260726145710_harden_grants_policies_and_billing_guard` | revoke-all + minimal grants, `(select auth.uid())` policies, billing-column guard trigger |
+| `20260731131138_seal_model_credentials_and_legacy_billing_rpcs` | seals hosted-only model credentials and obsolete floating-point billing RPCs |
+| `20260731132104_restore_plan_token_limits` | restores token-unit limits after hosted decimal display values blocked every prompt |
+| `20260731170000_reconcile_billing_rpc_signatures` | converts billing columns/RPCs to double precision, drops ambiguous overloads |
+| `20260801120000_model_credentials_delivery` | locked `model_credentials` table + authenticated-only `get_encrypted_model_api_key()` |
 
 The baseline is registered as already-applied on the hosted project, so
 `supabase db push` starts from the second file.
@@ -107,6 +114,7 @@ only these:
 | `set_my_plan(p_plan)` | demo-gated |
 | `add_credits(p_amount)` | demo-gated + daily cap |
 | `reset_usage_windows()` | demo-gated |
+| `get_encrypted_model_api_key(p_provider)` | AES-256-GCM ciphertext of the provider key; publish/rotate with `npm run supabase:secrets` |
 
 Failure envelopes carry no `h5`/`week` buckets — `src/lib/supabase-billing.ts`
 must never feed them to `normalizeUsage()`, or the UI resets to zero.

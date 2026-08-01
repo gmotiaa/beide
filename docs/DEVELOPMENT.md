@@ -31,6 +31,9 @@ There is no test framework. `electron/services/verification.test.ts` is a plain
 3. structured IPC envelopes and `IpcError` codes
 4. binary-safe checkpoints (base64) and byte-exact restore
 5. 30 ms token-delta batching
+6. token quota allocation and gating
+7. concurrent local usage/settings persistence
+8. Supabase loopback URL handling and symlink-aware workspace containment
 
 `scripts/run-ts.mjs` bundles a TS entry with esbuild (already present via vite)
 and runs it in Node — the harness imports extensionless relative modules, which
@@ -132,15 +135,16 @@ temporarily call `services.workspace.setRoot(path)` +
 
 ## Configuration
 
-`.env` (git-ignored, documented by `.env.example`):
+The public Supabase project (URL + anon key) is baked into
+`src/lib/supabase.ts` — no `.env` needed to sign in. `.env` (git-ignored,
+documented by `.env.example`) only carries overrides and operator secrets:
 
-* `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` — optional cloud account
-* `SUPABASE_SERVICE_ROLE_KEY` — main process only, or
+* `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` — point at another stack
+  (e.g. local `supabase start`)
+* `SUPABASE_SERVICE_ROLE_KEY` — scripts/main process only, or
   `%APPDATA%/beide/.beide-admin.env`
-* `BEIDE_GOOGLE_API_KEY`, `BEIDE_NVIDIA_API_KEY` — provider keys
-
-Anthropic and xAI credentials are **not** configured here: they come from
-`pi auth login` in `~/.pi/agent/auth.json`.
+* `BEIDE_ECHOGATE_API_KEY` — dev override for the provider key (production
+  gets it from Supabase after sign-in; publish with `npm run supabase:secrets`)
 
 ## Conventions
 

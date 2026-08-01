@@ -1,4 +1,3 @@
-import { Link } from "react-router-dom";
 import { Github } from "lucide-react";
 
 import WaveBg from "@/components/originkit/pulse-lines";
@@ -60,26 +59,26 @@ export function Footer() {
           <nav className="flex flex-col gap-3">
             <p className="text-foreground text-sm font-medium">Продукт</p>
             {NAV.map((item) => (
-              <Link
+              <a
                 key={item.to}
-                to={item.to}
+                href={item.to}
                 className="text-muted-foreground hover:text-foreground w-fit text-sm transition-colors"
               >
                 {item.label}
-              </Link>
+              </a>
             ))}
           </nav>
 
           <nav className="flex flex-col gap-3">
             <p className="text-foreground text-sm font-medium">Начать</p>
             {SECONDARY.map((item) => (
-              <Link
+              <a
                 key={item.to}
-                to={item.to}
+                href={item.to}
                 className="text-muted-foreground hover:text-foreground w-fit text-sm transition-colors"
               >
                 {item.label}
-              </Link>
+              </a>
             ))}
           </nav>
         </div>

@@ -1,4 +1,7 @@
 import { useEffect, useRef, type ReactNode } from "react";
+// Wires Monaco + workers into the loader. Lives here (not main.tsx) so the
+// whole Monaco bundle belongs to this lazy chunk, off the startup path.
+import "../../monaco-setup";
 import Editor, { type OnMount } from "@monaco-editor/react";
 import { useTranslation } from "react-i18next";
 import {
@@ -35,6 +38,16 @@ function monacoThemeFor(theme: string): string {
   return "beide-dark";
 }
 
+function disposeOrphanModels(
+  monaco: Parameters<OnMount>[1],
+  openPaths: string[],
+): void {
+  const open = new Set(openPaths.map((path) => monaco.Uri.parse(path).toString()));
+  for (const model of monaco.editor.getModels()) {
+    if (!open.has(model.uri.toString())) model.dispose();
+  }
+}
+
 function EditorWelcome({
   title,
   body,
@@ -55,7 +68,7 @@ function EditorWelcome({
           b
         </div>
         <Badge variant="secondary" className="bg-primary/10 text-primary">
-          beide · desktop agent IDE
+          {t("editor.welcomeBadge")}
         </Badge>
         <h1 className="editor-empty__title">{title}</h1>
         <p className="editor-empty__body">{body}</p>
@@ -69,7 +82,9 @@ function EditorWelcome({
                 <div className="editor-empty__tip-icon">
                   <IconFolderOpen size={18} stroke={1.75} />
                 </div>
-                <CardTitle className="text-sm">Workspace</CardTitle>
+                <CardTitle className="text-sm">
+                  {t("editor.tipWorkspaceTitle")}
+                </CardTitle>
                 <CardDescription>{t("editor.tipWorkspace")}</CardDescription>
               </CardHeader>
               <CardFooter className="gap-2">
@@ -85,7 +100,9 @@ function EditorWelcome({
                 <div className="editor-empty__tip-icon">
                   <IconMessageChatbot size={18} stroke={1.75} />
                 </div>
-                <CardTitle className="text-sm">Agent chat</CardTitle>
+                <CardTitle className="text-sm">
+                  {t("editor.tipAgentTitle")}
+                </CardTitle>
                 <CardDescription>{t("editor.tipAgent")}</CardDescription>
               </CardHeader>
               <CardFooter className="gap-2">
@@ -101,7 +118,9 @@ function EditorWelcome({
                 <div className="editor-empty__tip-icon">
                   <IconTerminal2 size={18} stroke={1.75} />
                 </div>
-                <CardTitle className="text-sm">Terminal</CardTitle>
+                <CardTitle className="text-sm">
+                  {t("editor.tipTerminalTitle")}
+                </CardTitle>
                 <CardDescription>{t("editor.tipTerminal")}</CardDescription>
               </CardHeader>
               <CardFooter className="gap-2">
@@ -151,16 +170,21 @@ export function EditorArea({ emptyAction }: EditorAreaProps) {
   useEffect(() => {
     const monaco = monacoRef.current;
     if (!monaco) return;
-    const open = new Set(tabs.map((tab) => monaco.Uri.parse(tab.path).toString()));
-    for (const model of monaco.editor.getModels()) {
-      if (!open.has(model.uri.toString())) model.dispose();
-    }
+    disposeOrphanModels(monaco, tabs.map((tab) => tab.path));
   }, [tabs]);
 
   const onMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
     monacoRef.current = monaco;
     setMonaco(editor);
+
+    // Tabs closed while this component was unmounted (e.g. Settings view open)
+    // left their models behind — the sweep effect above couldn't run without
+    // the ref. Reconcile once per mount.
+    disposeOrphanModels(
+      monaco,
+      useEditorStore.getState().tabs.map((tab) => tab.path),
+    );
 
     // The three editor themes mirror the palette in themes.css: the editor
     // surface is the same --panel the shell paints, and the caret/selection
@@ -244,14 +268,6 @@ export function EditorArea({ emptyAction }: EditorAreaProps) {
       setCursor(e.position.lineNumber, e.position.column);
     });
   };
-
-  useEffect(() => {
-    const ed = editorRef.current;
-    if (!ed) return;
-    const monaco = (window as unknown as { monaco?: { editor: { setTheme: (t: string) => void } } })
-      .monaco;
-    monaco?.editor.setTheme(monacoThemeFor(theme));
-  }, [theme]);
 
   const errorBanner = lastError ? (
     <Alert

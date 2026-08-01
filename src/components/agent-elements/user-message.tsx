@@ -1,4 +1,5 @@
 import { memo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { UIMessage } from "ai";
 import { cn } from "./utils/cn";
 import { FileAttachment } from "./input/file-attachment";
@@ -43,11 +44,20 @@ function getImageUrlFromPart(part: unknown): string | null {
   }
 
   if (type === "file") {
-    const filePart = part as { mimeType?: string; url?: string; data?: string };
-    if (filePart.mimeType?.startsWith("image/")) {
+    // AI SDK v5+ file parts carry `mediaType`; older shapes used `mimeType`.
+    // Checking only the legacy field made image attachments render as plain
+    // file chips instead of thumbnails.
+    const filePart = part as {
+      mediaType?: string;
+      mimeType?: string;
+      url?: string;
+      data?: string;
+    };
+    const media = filePart.mediaType ?? filePart.mimeType;
+    if (media?.startsWith("image/")) {
       if (filePart.url) return filePart.url;
       if (filePart.data) {
-        return `data:${filePart.mimeType};base64,${filePart.data}`;
+        return `data:${media};base64,${filePart.data}`;
       }
     }
   }
@@ -61,6 +71,7 @@ type FilePart = {
   name?: string;
   fileName?: string;
   size?: number;
+  mediaType?: string;
   mimeType?: string;
   url?: string;
 };
@@ -71,7 +82,8 @@ function getFileFromPart(part: unknown) {
   const filePart = part as FilePart;
   const filename =
     filePart.filename || filePart.name || filePart.fileName || "Attachment";
-  const isImage = filePart.mimeType?.startsWith("image/") ?? false;
+  const isImage =
+    (filePart.mediaType ?? filePart.mimeType)?.startsWith("image/") ?? false;
   if (isImage) return null;
   return {
     filename,
@@ -84,6 +96,7 @@ export const UserMessage = memo(function UserMessage({
   className,
   enableImagePreview = true,
 }: UserMessageProps) {
+  const { t } = useTranslation();
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const textParts = message.parts?.filter(isTextPart) ?? [];
   const text = textParts.map((p) => p.text).join("");
@@ -131,7 +144,7 @@ export const UserMessage = memo(function UserMessage({
           >
             <img
               src={url}
-              alt="attachment"
+              alt={t("chat.imageName", { n: i + 1 })}
               className="block object-cover max-w-[184px] max-h-[120px] rounded-an-message-inner"
             />
           </div>

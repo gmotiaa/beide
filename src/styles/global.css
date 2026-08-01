@@ -96,9 +96,9 @@ html.dark {
   color-scheme: dark;
 }
 
+/* Typography (family/size/spacing) is owned by shell.css — a second, slightly
+   different declaration here silently reactivates if the import order flips. */
 body {
-  font-family: var(--font-sans, "IBM Plex Sans", system-ui, sans-serif);
-  font-size: 12.5px;
   line-height: 1.45;
   background: var(--bg);
   color: var(--text);
@@ -189,6 +189,10 @@ pre,
 .glow-border-focus:focus-within {
   box-shadow: 0 0 0 2px var(--accent), 0 0 20px -1px var(--accent-glow, rgba(139, 139, 240, 0.3));
   transition: box-shadow 0.2s cubic-bezier(0.32, 0.72, 0, 1), border-color 0.2s ease;
+}
+
+.glow-border-subtle {
+  box-shadow: 0 0 0 1px var(--accent-border), 0 0 10px -4px var(--accent-glow);
 }
 
 /* Sleek custom scrollbars */
@@ -1007,6 +1011,25 @@ pre,
   word-break: break-word;
 }
 
+/* xterm hosts its own scroller and text metrics — the wrapper only lays out. */
+.terminal-panel__body--pty {
+  padding: 4px 6px;
+  overflow: hidden;
+  white-space: normal;
+  display: flex;
+  flex-direction: column;
+}
+
+.terminal-panel__xterm {
+  flex: 1;
+  min-height: 0;
+}
+
+.terminal-panel__xterm .xterm,
+.terminal-panel__xterm .xterm-viewport {
+  height: 100%;
+}
+
 .terminal-panel__body .term-out {
   color: var(--text);
 }
@@ -1123,6 +1146,11 @@ pre,
 
 .search-result:hover {
   background: var(--panel-hover);
+}
+
+.search-result:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 .search-empty {

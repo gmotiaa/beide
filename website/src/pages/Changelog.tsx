@@ -1,4 +1,3 @@
-import { Link } from "react-router-dom";
 import { ArrowRight, Plus, RefreshCw, Wrench } from "lucide-react";
 
 import {
@@ -116,10 +115,10 @@ export default function Changelog() {
               </a>
             </Button>
             <Button asChild variant="outline">
-              <Link to="/download">
+              <a href="/download">
                 Установить
                 <ArrowRight />
-              </Link>
+              </a>
             </Button>
           </div>
         </Container>
