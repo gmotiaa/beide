@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import {
+  IconFileText,
   IconGauge,
   IconHistory,
   IconPalette,
@@ -13,6 +14,7 @@ import { appIconUrl } from "../../lib/assets";
 import { cn } from "../../lib/utils";
 import { Badge } from "../ui/badge";
 import { usageHeadline } from "./helpers";
+import { RulesSection } from "./RulesSection";
 import { UsageSection } from "./UsageSection";
 import {
   AgentSection,
@@ -26,6 +28,7 @@ type SectionId =
   | "account"
   | "appearance"
   | "agent"
+  | "rules"
   | "providers"
   | "privacy"
   | "checkpoints";
@@ -55,6 +58,12 @@ const SECTIONS: SectionDef[] = [
     icon: <IconRobot className="size-4" stroke={1.75} />,
     labelKey: "settings.navAgent",
     render: () => <AgentSection />,
+  },
+  {
+    id: "rules",
+    icon: <IconFileText className="size-4" stroke={1.75} />,
+    labelKey: "settings.navRules",
+    render: () => <RulesSection />,
   },
   {
     id: "providers",

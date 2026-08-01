@@ -80,6 +80,20 @@ rewrite the text written before the tools ran.
    the main path a few photo-sized images pushed the file past
    `MAX_SESSION_FILE_CHARS`, making the session permanently unreadable.
 
+## Cloud backup
+
+`saveSnapshot` (in `src/stores/chat.ts`) writes the local file first, then
+fires a cloud write-through: `upsertCloudSession()` against
+`public.chat_sessions`, by value from the same `compacted` array already
+saved locally, and fire-and-forget (errors are swallowed — the local file
+stays the source of truth when offline). It runs strictly after the local
+`api.session.save()` and never reads the store, so it cannot interact with
+invariants 2–3 above (no stale-epoch or empty-snapshot risk from the backup
+path itself). Restoring a cloud-only chat (fresh machine, wiped `.beide`)
+goes through `session:import`, which writes the file wholesale into
+`.beide/sessions/` — see `ChatHistory.tsx`'s "From the cloud" section and
+[KNOWN-GAPS.md](KNOWN-GAPS.md) for the account-level picture.
+
 ## Restoring vs. loading
 
 * `restoreActiveSession()` — silent, on mount, merges with live rows. Never

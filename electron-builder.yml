@@ -29,13 +29,13 @@ asarUnpack:
   - node_modules/@earendil-works/**
   - node_modules/@lydell/**
 
-# Auto-update feed (electron-updater, generic provider). The URL must serve
-# latest.yml + the artifacts from `npm run package:win` — upload them there on
-# every release (electron-builder --publish also can). Placeholder until real
-# hosting exists; the updater fails silently when the feed is unreachable.
+# Auto-update feed: GitHub Releases of gmotiaa/beide. electron-updater reads
+# latest.yml from the newest release; .github/workflows/release.yml uploads it
+# (and the installers) on every v* tag. Public repo → no token needed to check.
 publish:
-  provider: generic
-  url: https://beide.by/updates
+  provider: github
+  owner: gmotiaa
+  repo: beide
 
 win:
   icon: build/icon.ico

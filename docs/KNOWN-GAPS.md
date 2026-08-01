@@ -22,25 +22,56 @@ new list accumulate — wire or delete.
 
 ## Testing
 
-No test framework. `npm test` runs a single hand-written harness over eleven
+No test framework. `npm test` runs a single hand-written harness over twelve
 backend invariants (`electron/services/verification.test.ts`); the renderer
 stores, the IPC layer end-to-end and every React component are uncovered. The
 chat store is the highest-risk uncovered code.
 
 ## Terminal
 
-`TerminalPanel` shells out through `shell:run` (`cmd.exe /c`, 30 s timeout). No
-PTY, no interactive programs, no ANSI-heavy TUIs. A real terminal needs
-`node-pty` + `@xterm/xterm`, neither of which is installed.
+`TerminalPanel` is now a real PTY: ConPTY via `@lydell/node-pty` (prebuilt
+binary, no native rebuild) behind `terminal:create`/`write`/`resize`/`kill`,
+rendered with `@xterm/xterm`, up to 8 tabs (`MAX_TABS` in
+`TerminalPanel.tsx`, mirrored server-side by `MAX_TERMINALS` in
+`electron/services/terminal.ts`). Interactive programs and ANSI-heavy TUIs
+work. Still missing:
+
+* No shell picker — always the system default (`cmd.exe`/`COMSPEC` on
+  Windows).
+* No persistence across app restarts: tabs and their running shells die with
+  the window; reopening the app always starts with one fresh tab.
+* The agent's own `bash` tool is unrelated and unchanged — it still runs
+  through `shell:run` (`cmd.exe /c`, 30 s timeout, no PTY), not the terminal
+  panel's PTY (see [AGENT-RUNTIME.md](AGENT-RUNTIME.md)).
 
 ## Packaging
 
 `electron-builder.yml` produces installer and portable Windows artifacts.
 Auto-update is wired (electron-updater, generic feed in `publish.url`) but the
-feed URL is a placeholder — until real hosting serves `latest.yml` + the
+feed URL is still a placeholder — until real hosting serves `latest.yml` + the
 installers, the check fails silently on every launch. Builds are still
 unsigned: updates work, but Windows shows the unknown-publisher prompt; fixing
 that needs a real certificate (`win.certificateFile`).
+
+There is also no crash reporting: Sentry (or any equivalent) is not
+integrated anywhere in the app — a renderer or main-process crash leaves
+nothing but whatever the user saw on screen. Wiring it needs a DSN and a
+decision on what to redact before upload (chat content, file paths).
+
+## Editor intelligence
+
+Monaco's own TypeScript/JS worker is the only "language server" in the app —
+there is no LSP client, so non-TS languages (Python, Go, Rust, …) get syntax
+highlighting only: no real diagnostics, go-to-definition or completions
+beyond Monaco's built-ins. The "Editor diagnostics (open tabs)" block fed to
+the agent (see [AGENT-RUNTIME.md](AGENT-RUNTIME.md)) is only as good as
+whatever Monaco itself can produce for the language.
+
+`@codebase` search (chat mentions and the composer's `@codebase <query>`) is
+lexical only — `WorkspaceService.searchContent()` is a text/regex grep over
+files, not a semantic or embedding-based index. There is no vector store and
+no ranking beyond match position; a query has to share vocabulary with the
+code it should find.
 
 ## Bundle size
 
@@ -78,3 +109,13 @@ the app (`electron/services/provider-key.ts`), so this is defence in depth
 against casual extraction, not true secrecy — that would need a server-side
 proxy for all model traffic. `BEIDE_ECHOGATE_API_KEY` in `.env` remains a dev
 override. Publish/rotate the cloud key with `npm run supabase:secrets`.
+
+Chat sessions now have a cloud write-through backup: after every local
+`session:save`, the renderer also upserts the transcript to
+`public.chat_sessions` (owner-only RLS, keyed by a client-side hash of the
+workspace root, fire-and-forget — see
+[CHAT-AND-SESSIONS.md](CHAT-AND-SESSIONS.md)). The local `.beide/sessions/`
+files remain the source of truth; the cloud copy is a fallback surfaced in
+chat history's "From the cloud" section (`session:import` to restore), useful
+after a fresh machine or a wiped `.beide` folder. There is no cloud→local
+sync in the other direction beyond that manual restore.

@@ -166,6 +166,39 @@ export class CheckpointService {
     }
   }
 
+  /**
+   * The files a checkpoint snapshotted, with their "before" contents — the
+   * data the renderer's per-file diff view needs. Binary payloads come back
+   * with `binary: true` and no text (a base64 diff is noise).
+   */
+  async entries(
+    id: string,
+  ): Promise<Array<{ path: string; existed: boolean; before: string | null; binary: boolean }>> {
+    assertSafeId(id);
+    const dir = join(this.dir(), id);
+    const names = (await readdir(dir)).filter((n) => /^entry_\d{4}\.json$/.test(n)).sort();
+    const out: Array<{ path: string; existed: boolean; before: string | null; binary: boolean }> =
+      [];
+    for (const name of names) {
+      try {
+        const payload = JSON.parse(
+          await readFile(join(dir, name), "utf-8"),
+        ) as CheckpointEntryPayload;
+        if (typeof payload.path !== "string") continue;
+        const binary = payload.encoding === "base64";
+        out.push({
+          path: payload.path,
+          existed: Boolean(payload.existed),
+          before: binary ? null : payload.content,
+          binary,
+        });
+      } catch {
+        // skip unreadable entries — the diff view shows what it can
+      }
+    }
+    return out;
+  }
+
   async list(): Promise<CheckpointInfo[]> {
     if (!this.workspaceRoot) return [];
     const base = this.dir();

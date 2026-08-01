@@ -35,6 +35,36 @@ export type Database = {
         }
         Relationships: []
       }
+      chat_sessions: {
+        Row: {
+          user_id: string
+          workspace_key: string
+          id: string
+          title: string
+          mode: string
+          messages: Json
+          updated_at: string
+        }
+        Insert: {
+          user_id?: string
+          workspace_key: string
+          id: string
+          title?: string
+          mode?: string
+          messages?: Json
+          updated_at?: string
+        }
+        Update: {
+          user_id?: string
+          workspace_key?: string
+          id?: string
+          title?: string
+          mode?: string
+          messages?: Json
+          updated_at?: string
+        }
+        Relationships: []
+      }
       plan_limits: {
         Row: {
           label: string

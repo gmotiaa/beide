@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
+  IconCloud,
   IconHistory,
   IconMessagePlus,
   IconMessages,
@@ -23,6 +24,13 @@ import {
   TooltipTrigger,
 } from "../ui/tooltip";
 import { useChatStore } from "../../stores/chat";
+import { useWorkspaceStore } from "../../stores/workspace";
+import {
+  fetchCloudSessionMessages,
+  listCloudSessions,
+  type CloudSessionInfo,
+} from "../../lib/supabase-sessions";
+import { getBeide } from "../../lib/ipc";
 import { cn } from "../../lib/utils";
 import type { SessionInfo } from "../../lib/types";
 
@@ -100,14 +108,44 @@ export function ChatHistory() {
   const newSession = useChatStore((s) => s.newSession);
   const setError = useChatStore((s) => s.setError);
 
+  const rootPath = useWorkspaceStore((s) => s.rootPath);
+  const [cloudSessions, setCloudSessions] = useState<CloudSessionInfo[]>([]);
+
   useEffect(() => {
-    if (open) void refreshSessions();
-  }, [open, refreshSessions]);
+    if (!open) return;
+    void refreshSessions();
+    if (rootPath) {
+      void listCloudSessions(rootPath).then(setCloudSessions);
+    }
+  }, [open, refreshSessions, rootPath]);
 
   const sorted = useMemo(
     () => [...sessions].sort((a, b) => b.updatedAt - a.updatedAt),
     [sessions],
   );
+
+  // Cloud copies that no longer exist locally (fresh machine, cleaned .beide).
+  const cloudOnly = useMemo(() => {
+    const local = new Set(sessions.map((s) => s.id));
+    return cloudSessions.filter((s) => !local.has(s.id));
+  }, [sessions, cloudSessions]);
+
+  const restoreFromCloud = async (session: CloudSessionInfo) => {
+    const api = getBeide();
+    if (!api || !rootPath) return;
+    const messages = await fetchCloudSessionMessages(rootPath, session.id);
+    if (!messages) {
+      setError(t("chat.cloudRestoreFailed"));
+      return;
+    }
+    await api.session.import(
+      { id: session.id, title: session.title, mode: session.mode },
+      messages,
+    );
+    await loadSession(session.id);
+    setError(null);
+    setOpen(false);
+  };
 
   return (
     <>
@@ -189,6 +227,29 @@ export function ChatHistory() {
                   }}
                 />
               ))}
+
+              {cloudOnly.length > 0 && (
+                <>
+                  <div className="mt-3 flex items-center gap-2 px-3 pb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                    <IconCloud className="size-3.5" stroke={1.75} />
+                    {t("chat.cloudSection")}
+                  </div>
+                  {cloudOnly.map((s) => (
+                    <SessionRow
+                      key={`cloud-${s.id}`}
+                      session={{
+                        id: s.id,
+                        title: s.title,
+                        mode: s.mode,
+                        createdAt: s.updatedAt,
+                        updatedAt: s.updatedAt,
+                      }}
+                      active={false}
+                      onSelect={() => void restoreFromCloud(s)}
+                    />
+                  ))}
+                </>
+              )}
             </div>
           </ScrollArea>
         </SheetContent>

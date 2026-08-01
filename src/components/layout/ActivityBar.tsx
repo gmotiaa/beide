@@ -1,7 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { Icons } from "../common/IconButton";
 
-export type ActivityId = "files" | "search" | "settings";
+export type ActivityId = "files" | "search" | "git" | "settings";
 
 interface ActivityBarProps {
   active: ActivityId;
@@ -43,6 +43,16 @@ export function ActivityBar({
         onClick={() => onChange("search")}
       >
         {Icons.search}
+      </button>
+      <button
+        type="button"
+        className={`activity-btn${active === "git" ? " is-active" : ""}`}
+        title={t("git.title")}
+        aria-label={t("git.title")}
+        aria-pressed={active === "git"}
+        onClick={() => onChange("git")}
+      >
+        {Icons.sourceControl}
       </button>
       <button
         type="button"

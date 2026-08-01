@@ -1,9 +1,42 @@
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { getBeide } from "../../lib/ipc";
 import { findModel } from "../../lib/models";
 import { useAgentStore } from "../../stores/agent";
 import { useEditorStore } from "../../stores/editor";
 import { useSettingsStore } from "../../stores/settings";
 import { useWorkspaceStore } from "../../stores/workspace";
+
+const HEALTH_POLL_MS = 90_000;
+
+/**
+ * Gateway reachability, polled lazily. `null` = unknown/probing — the badge
+ * only appears once the gateway has actually failed a probe, so a healthy
+ * install never shows extra chrome.
+ */
+function useGatewayHealth(): boolean | null {
+  const [ok, setOk] = useState<boolean | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const probe = async () => {
+      const api = getBeide();
+      if (!api) return;
+      try {
+        const res = await api.agent.health();
+        if (alive) setOk(res.ok);
+      } catch {
+        if (alive) setOk(false);
+      }
+    };
+    void probe();
+    const timer = setInterval(() => void probe(), HEALTH_POLL_MS);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, []);
+  return ok;
+}
 
 export function StatusBar() {
   const { t } = useTranslation();
@@ -16,6 +49,7 @@ export function StatusBar() {
   const model = useAgentStore((s) => s.model);
   const modelLabel = useSettingsStore((s) => s.settings.modelLabel);
   const mode = useAgentStore((s) => s.mode);
+  const gatewayOk = useGatewayHealth();
 
   const active = tabs.find((tab) => tab.path === activePath);
   // Same display name as the picker — the raw id ("gpt-5.6-terra") read like
@@ -37,6 +71,15 @@ export function StatusBar() {
         <span className="status-bar__item">
           {mode === "plan" ? t("chat.modePlan") : t("chat.modeAgent")}
         </span>
+        {gatewayOk === false && (
+          <span
+            className="status-bar__item"
+            style={{ color: "var(--warning)" }}
+            title={t("status.gatewayDownHint")}
+          >
+            {t("status.gatewayDown")}
+          </span>
+        )}
       </div>
       <div className="status-bar__right">
         {active && (

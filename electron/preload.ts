@@ -56,10 +56,27 @@ const api: BeideApi = {
     getProviders: () => invoke("agent:getProviders"),
     installProviderKey: (ciphertext: string) =>
       invoke("agent:installProviderKey", ciphertext),
+    health: () => invoke("agent:health"),
   },
   checkpoint: {
     list: () => invoke("checkpoint:list"),
     restore: (id: string) => invoke<string[]>("checkpoint:restore", id),
+    entries: (id: string) => invoke("checkpoint:entries", id),
+  },
+  ai: {
+    complete: (payload: {
+      prompt: string;
+      system?: string;
+      model?: string;
+      maxTokens?: number;
+    }) => invoke("ai:complete", payload),
+  },
+  git: {
+    status: () => invoke("git:status"),
+    stage: (path: string) => invoke("git:stage", path),
+    unstage: (path: string) => invoke("git:unstage", path),
+    diff: (path: string, staged?: boolean) => invoke("git:diff", path, staged),
+    commit: (message: string) => invoke("git:commit", message),
   },
   settings: {
     get: () => invoke("settings:get"),
@@ -71,6 +88,8 @@ const api: BeideApi = {
     load: (id: string) => invoke("session:load", id),
     new: () => invoke("session:new"),
     save: (id: string, messages: unknown) => invoke("session:save", id, messages),
+    import: (info: { id: string; title: string; mode: string }, messages: unknown) =>
+      invoke("session:import", info, messages),
     delete: (id: string) => invoke("session:delete", id),
   },
   shell: {

@@ -6,15 +6,6 @@ export function getBeide(): BeideApi | null {
   return window.beide ?? null;
 }
 
-/** Require window.beide or throw a clear error for UI surfaces. */
-export function requireBeide(): BeideApi {
-  const api = getBeide();
-  if (!api) {
-    throw new Error("window.beide is not available. Run inside the Electron shell.");
-  }
-  return api;
-}
-
 /** Subscribe to a main→renderer channel; no-op when API missing. */
 export function onBeide(
   channel: string,

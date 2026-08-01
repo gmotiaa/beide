@@ -211,12 +211,15 @@ export const InputBar = memo(function InputBar({
     setDismissedQuestionId(null);
   }, [questionBar?.id]);
 
+  // Streaming no longer blocks submit: the host queues messages sent mid-turn
+  // as follow-up prompts, so Enter works during a stream. The toolbar button
+  // still turns into Stop while streaming (see the SendButton handler below).
   const handleSubmit = useCallback(() => {
     const trimmed = input.trim();
-    if (!trimmed || isStreaming || disabled) return;
+    if (!trimmed || disabled) return;
     onSend({ role: "user", content: trimmed });
     setInput("");
-  }, [input, isStreaming, disabled, onSend, setInput]);
+  }, [input, disabled, onSend, setInput]);
 
   const handleInfoBarClose = useCallback(() => {
     setIsInfoBarOpen(false);

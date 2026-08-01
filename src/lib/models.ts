@@ -32,19 +32,6 @@ export const VENDOR_LABELS: Record<ModelVendor, string> = {
   minimax: "MiniMax",
 };
 
-/** Group order in the picker; catalog entries are declared in this order too. */
-export const VENDOR_ORDER: ModelVendor[] = [
-  "openai",
-  "anthropic",
-  "google",
-  "xai",
-  "deepseek",
-  "alibaba",
-  "moonshot",
-  "zhipu",
-  "minimax",
-];
-
 export interface BeideModel {
   /** Exact id sent as `body.model` — never a display alias. */
   id: string;
@@ -72,7 +59,7 @@ const P = { provider: "echogate" as const };
 const MAX_OUTPUT_CAP = 131_072;
 const out = (reported: number) => Math.min(reported, MAX_OUTPUT_CAP);
 
-// Ordered by vendor (VENDOR_ORDER), newest first within a vendor. This is the
+// Ordered by vendor (group order in the picker), newest first within a vendor. This is the
 // gateway's full /v1/models list; `disabled` marks entries the gateway lists
 // but which currently error on completion (verified by hand — re-check before
 // flipping them back on).

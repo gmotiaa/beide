@@ -45,7 +45,7 @@ export function asObject(value: unknown, name: string): Record<string, unknown> 
   return value as Record<string, unknown>;
 }
 
-export function asArray(value: unknown, name: string, maxItems = 5_000): unknown[] {
+function asArray(value: unknown, name: string, maxItems = 5_000): unknown[] {
   if (!Array.isArray(value)) {
     throw new IpcError(`${name} must be an array`, "INVALID_TYPE");
   }

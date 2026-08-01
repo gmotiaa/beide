@@ -306,6 +306,39 @@ export class SessionService {
     });
   }
 
+  /**
+   * Materialize a cloud-backed session as a local file. No-op when the id
+   * already exists locally — the local copy is the source of truth.
+   */
+  async importSession(
+    info: { id: string; title: string; mode: AgentMode },
+    messages: ChatMessage[],
+  ): Promise<void> {
+    return this.enqueueMutation(async () => {
+      const root = this.requireRoot();
+      assertSafeId(info.id);
+      const path = this.filePath(info.id);
+      try {
+        await stat(path);
+        return; // already local
+      } catch {
+        // absent → import
+      }
+      await mkdir(getSessionsDir(root), { recursive: true });
+      const data: SessionFile = {
+        info: {
+          id: info.id,
+          title: info.title.slice(0, 200) || "New chat",
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          mode: info.mode,
+        },
+        messages: clampMessages(compactImages(messages)),
+      };
+      await writeJsonAtomic(path, data);
+    });
+  }
+
   async delete(id: string): Promise<void> {
     return this.enqueueMutation(async () => {
       assertSafeId(id);

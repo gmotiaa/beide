@@ -29,6 +29,7 @@ escalation hole open). Migrations replaced it.
 | `20260731132104_restore_plan_token_limits` | restores token-unit limits after hosted decimal display values blocked every prompt |
 | `20260731170000_reconcile_billing_rpc_signatures` | converts billing columns/RPCs to double precision, drops ambiguous overloads |
 | `20260801120000_model_credentials_delivery` | locked `model_credentials` table + authenticated-only `get_encrypted_model_api_key()` |
+| `20260801150000_chat_sessions_cloud_backup` | `chat_sessions` table — owner-only RLS, directly readable/writable by `authenticated` |
 
 The baseline is registered as already-applied on the hosted project, so
 `supabase db push` starts from the second file.
@@ -118,6 +119,20 @@ only these:
 
 Failure envelopes carry no `h5`/`week` buckets — `src/lib/supabase-billing.ts`
 must never feed them to `normalizeUsage()`, or the UI resets to zero.
+
+## `chat_sessions` — a table, not an RPC
+
+Unlike the rest of the client surface, `public.chat_sessions` is granted
+directly to `authenticated` (`select, insert, update, delete`) instead of
+being RPC-gated: `chat_sessions_own` RLS restricts every row to
+`(select auth.uid()) = user_id`, so the table itself is the access boundary.
+This is the cloud write-through backup for chat transcripts described in
+[docs/CHAT-AND-SESSIONS.md](../docs/CHAT-AND-SESSIONS.md). `supabase:verify`
+currently asserts everything except `plan_limits` answers `401 / 42501` for
+`anon` — `chat_sessions` should still satisfy that (RLS blocks unauthenticated
+reads even though the grant exists), but a signed-in check for the
+owner-only behavior isn't in the script yet; if you touch `supabase:verify`,
+add one rather than assuming the existing anon-only assertions cover it.
 
 ## Not configurable from here
 

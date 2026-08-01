@@ -7,6 +7,7 @@ import type {
   SessionInfo,
 } from "../lib/types";
 import { getBeide, uid } from "../lib/ipc";
+import { upsertCloudSession } from "../lib/supabase-sessions";
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let saveChain: Promise<void> = Promise.resolve();
@@ -68,7 +69,28 @@ async function saveSnapshot(
 ): Promise<string | null> {
   if (!messages.length) return sessionId;
   const id = sessionId ?? (await adoptOrCreateSession(api));
-  await api.session.save(id, compactForSave(messages));
+  const compacted = compactForSave(messages);
+  await api.session.save(id, compacted);
+  // Cloud write-through, strictly after the local write and strictly by
+  // value: no store reads here, so transcript epochs are untouched
+  // (docs/CHAT-AND-SESSIONS.md invariants 2–3). Fire-and-forget — the local
+  // file stays the source of truth when offline.
+  void (async () => {
+    try {
+      const root = await api.workspace.getRoot();
+      if (!root) return;
+      const info = useChatStore.getState().sessions.find((s) => s.id === id);
+      const firstUser = compacted.find((m) => m.role === "user");
+      await upsertCloudSession(root, {
+        id,
+        title: info?.title ?? firstUser?.content.slice(0, 60).trim() ?? "New chat",
+        mode: info?.mode ?? "agent",
+        messages: compacted,
+      });
+    } catch {
+      /* best-effort backup */
+    }
+  })();
   return id;
 }
 

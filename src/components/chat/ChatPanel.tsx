@@ -8,7 +8,9 @@ import {
   IconPlus,
   IconRobot,
   IconSearch,
+  IconTerminal2,
 } from "@tabler/icons-react";
+import { getTerminalSnapshot } from "../../lib/terminal-buffer";
 
 import { MessageList } from "../agent-elements/message-list";
 import { InputBar } from "../agent-elements/input-bar";
@@ -510,6 +512,27 @@ export function ChatPanel() {
                     value={model || DEFAULT_MODEL_ID}
                     onChange={(selectedId) => void setModel(selectedId)}
                   />
+                  <button
+                    type="button"
+                    title={t("chat.attachTerminal")}
+                    aria-label={t("chat.attachTerminal")}
+                    className="inline-flex h-7 items-center gap-1 rounded-[6px] px-2 text-[12px] leading-4 text-foreground/40 transition-colors hover:bg-foreground/6 cursor-pointer"
+                    onClick={() => {
+                      const snapshot = getTerminalSnapshot();
+                      const chat = useChatStore.getState();
+                      if (!snapshot.trim()) {
+                        chat.setError(t("chat.attachTerminalEmpty"));
+                        return;
+                      }
+                      chat.setDraft(
+                        `${chat.draft.trimEnd()}\n\n\`\`\`terminal\n${snapshot}\n\`\`\`\n`.trimStart(),
+                      );
+                      document.getElementById("chat-composer")?.focus();
+                    }}
+                  >
+                    <IconTerminal2 className="size-3.5" stroke={1.75} />
+                    <span>@terminal</span>
+                  </button>
                 </div>
               }
               className="beide-agent-input"

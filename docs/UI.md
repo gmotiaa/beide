@@ -62,6 +62,32 @@ that converter before suspecting the list.
 Unknown tools fall back to `GenericTool` — adding a tool card means adding an
 entry to `tool-registry.ts`, not a special case in the list.
 
+## Other surfaces
+
+* **Git panel** (`src/components/git/GitPanel.tsx`) — an ActivityBar entry.
+  Status, stage/unstage, diff, and commit, backed by `git:status` /
+  `git:stage` / `git:unstage` / `git:diff` / `git:commit`. The commit message
+  field has an AI-generate button (`AgentService.complete()` over the staged
+  diff).
+* **Command palette** (`Ctrl/Cmd+Shift+P` or `F1`,
+  `src/components/layout/CommandPalette.tsx`) — fuzzy search over files and
+  app commands.
+* **"Правила проекта" settings section** (`src/components/settings/
+  RulesSection.tsx`) — edits `BEIDE.md` and `.beide/rules.md` in the open
+  workspace, the same files `getRulesCandidates()` feeds into the agent's
+  system prompt (see [AGENT-RUNTIME.md](AGENT-RUNTIME.md)).
+* **Chat composer extras** (Agent Elements `input-bar.tsx` + `ChatPanel.tsx`):
+  an "@terminal" button attaches the active terminal tab's visible tail (last
+  ~80 non-empty lines, via `terminal-buffer.ts`); typing `@codebase <query>`
+  in the message text triggers a lexical content search whose hits ride along
+  as prompt context (see [AGENT-RUNTIME.md](AGENT-RUNTIME.md)); sending while
+  a turn is still streaming queues the message as a follow-up instead of
+  being rejected; a system notification fires when the agent finishes a turn
+  while the window is unfocused (`Notification`, permission requested
+  lazily, silently a no-op without it).
+* **Ghost text** — an editor action toggle for inline autocompletion,
+  persisted in `localStorage` under `beide.ghostText` (`ghost-text.ts`).
+
 ## Keyboard shortcuts
 
 Registered globally in `AppLayout` (`Ctrl` on Windows, `Cmd` on macOS):
@@ -73,10 +99,17 @@ Registered globally in `AppLayout` (`Ctrl` on Windows, `Cmd` on macOS):
 | `Ctrl/Cmd+L` | open the chat panel and focus `#chat-composer` |
 | `Ctrl/Cmd+B` | toggle the sidebar |
 | ``Ctrl/Cmd+` `` | toggle the terminal |
+| `Ctrl/Cmd+K` | inline AI edit on the current selection/line (Monaco editor action, `EditorArea.tsx`) |
+| `Ctrl/Cmd+Shift+P`, `F1` | open the command palette (`CommandPalette.tsx`) |
 
-Inside the terminal input, `Ctrl/Cmd+L` clears the log instead; `↑`/`↓` walk the
-command history. In the composer, `Enter` sends and `Shift+Enter` inserts a
-newline.
+The terminal panel is real PTY tabs (`@xterm/xterm` + ConPTY via
+`terminal:*` IPC, up to 8 tabs, `TerminalPanel.tsx`) — interactive programs and
+ANSI-heavy TUIs work; `↑`/`↓` and everything else go to the running shell, not
+the app. `TerminalPanel` no longer intercepts `Ctrl/Cmd+L` to clear the log
+(stale claim from the command-runner era) — that combo now does the global
+thing (opens the chat panel) even while a terminal tab is focused; clear a
+tab's scrollback with the trash-can button in its header. In the composer,
+`Enter` sends and `Shift+Enter` inserts a newline.
 
 `workspace:changed` (optional `{ path? }`) refreshes the file tree and reloads
 open tabs for that path **only when they are not dirty** — never clobber unsaved

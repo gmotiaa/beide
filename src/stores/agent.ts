@@ -155,6 +155,40 @@ function extractToolName(raw: Record<string, unknown>): string {
   return typeof name === "string" && name ? name : "tool";
 }
 
+/**
+ * System notification when a turn finishes while the window is in the
+ * background. Permission is requested lazily on first use; denial (or a
+ * platform without Notification) is silently a no-op.
+ */
+function notifyAgentDone(): void {
+  try {
+    if (typeof Notification === "undefined") return;
+    if (!document.hidden && document.hasFocus()) return;
+    const show = () => {
+      try {
+        new Notification(i18n.t("chat.notificationTitle"), {
+          body: i18n.t("chat.agentDoneNotification"),
+        });
+      } catch {
+        /* best-effort */
+      }
+    };
+    if (Notification.permission === "granted") {
+      show();
+    } else if (Notification.permission === "default") {
+      void Notification.requestPermission()
+        .then((p) => {
+          if (p === "granted") show();
+        })
+        .catch(() => {
+          /* denied or unavailable — never throw */
+        });
+    }
+  } catch {
+    /* notifications are best-effort */
+  }
+}
+
 function previousToolArgs(toolCallId?: string): Record<string, unknown> {
   if (!toolCallId) return {};
   const msgs = useChatStore.getState().messages;
@@ -285,10 +319,9 @@ export const useAgentStore = create<AgentState>((set, get) => ({
 
     if (!content && images.length === 0) return;
 
-    if (get().streaming) {
-      chat.setError(i18n.t("chat.turnInProgress"));
-      return;
-    }
+    // Sending while a turn streams is allowed: main serializes prompts and pi
+    // treats them as follow-ups ("followUp" streaming behavior), so the message
+    // queues instead of being rejected.
 
     const api = getBeide();
     if (!api) {
@@ -323,20 +356,35 @@ export const useAgentStore = create<AgentState>((set, get) => ({
       return;
     }
 
-    chat.appendUserMessage(content || "(image)", images, mentions);
+    // "@codebase <query>" anywhere in the message becomes a codebase mention;
+    // main resolves it into content-search results before the prompt.
+    const codebaseMatch = content.match(/(?:^|\s)@codebase\s+([^\n]{2,120})/);
+    const effectiveMentions = codebaseMatch
+      ? [
+          ...mentions,
+          {
+            type: "codebase" as const,
+            path: codebaseMatch[1]!.trim(),
+            name: "@codebase",
+          },
+        ]
+      : mentions;
+
+    chat.appendUserMessage(content || "(image)", images, effectiveMentions);
     chat.ensureAssistantStreaming();
     set({ streaming: true });
 
     const payload: AgentPromptPayload = {
       text: content,
       mode: get().mode,
-      mentions,
+      mentions: effectiveMentions,
       images,
       activeFile: editor.activePath ?? undefined,
       activeFileContent: editor.activePath
         ? editor.tabs.find((tab) => tab.path === editor.activePath)?.content
         : undefined,
       openFiles: editor.tabs.map((t) => t.path),
+      diagnostics: editor.diagnostics || undefined,
     };
 
     try {
@@ -525,6 +573,9 @@ export const useAgentStore = create<AgentState>((set, get) => ({
         chat.finalizeAssistant();
         set({ streaming: false, retryNotice: null });
         void get().refreshStatus();
+        // Foreign-session events never reach this point (filtered above), so
+        // this only announces the turn the user is actually waiting on.
+        notifyAgentDone();
       }
       return;
     }

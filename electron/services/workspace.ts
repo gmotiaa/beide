@@ -338,6 +338,69 @@ export class WorkspaceService {
     return results;
   }
 
+  /**
+   * Literal, case-insensitive content search across text files. Powers the
+   * @codebase mention: JS-side scan (no ripgrep dependency on Windows),
+   * bounded hard so a huge repo cannot stall the main process.
+   */
+  async searchContent(
+    query: string,
+  ): Promise<Array<{ path: string; line: number; text: string }>> {
+    const root = this.requireRoot();
+    const q = query.trim().toLowerCase();
+    if (q.length < 2 || q.length > 200) return [];
+
+    const results: Array<{ path: string; line: number; text: string }> = [];
+    const limit = 120;
+    let visited = 0;
+    const maxVisit = 6_000;
+    const maxFileBytes = 512_000;
+    const textExt =
+      /\.(ts|tsx|js|jsx|mjs|cjs|json|jsonc|css|scss|html|md|mdx|txt|yml|yaml|toml|py|go|rs|java|kt|c|h|cpp|hpp|cs|rb|php|sql|sh|ps1|vue|svelte)$/i;
+
+    const walk = async (dir: string, relParent: string, depth: number): Promise<void> => {
+      if (results.length >= limit || visited >= maxVisit || depth > 12) return;
+      let entries;
+      try {
+        entries = await readdir(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        if (results.length >= limit || visited >= maxVisit) return;
+        visited += 1;
+        const rel = relParent ? `${relParent}/${entry.name}` : entry.name;
+        const isDir = entry.isDirectory();
+        if (isDir && shouldSkipDir(entry.name, relParent, this.gitIgnoreMatcher)) continue;
+        if (this.gitIgnoreMatcher?.ignores(rel, isDir)) continue;
+        const full = join(dir, entry.name);
+        if (isDir) {
+          await walk(full, rel, depth + 1);
+          continue;
+        }
+        if (!entry.isFile() || !textExt.test(entry.name)) continue;
+        try {
+          if ((await stat(full)).size > maxFileBytes) continue;
+          const lines = (await readFile(full, "utf-8")).split(/\r?\n/);
+          for (let i = 0; i < lines.length && results.length < limit; i++) {
+            if (lines[i]!.toLowerCase().includes(q)) {
+              results.push({
+                path: rel.replace(/\\/g, "/"),
+                line: i + 1,
+                text: lines[i]!.trim().slice(0, 240),
+              });
+            }
+          }
+        } catch {
+          // unreadable file — skip
+        }
+      }
+    };
+
+    await walk(root, "", 0);
+    return results;
+  }
+
   private requireRoot(): string {
     if (!this.rootPath) {
       throw new Error("No workspace open");

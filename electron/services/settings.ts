@@ -4,7 +4,7 @@ import { dirname } from "node:path";
 import { DEFAULT_MODEL_ID } from "../../src/lib/models";
 import type { BeideSettings } from "../../src/lib/types";
 
-export const DEFAULT_SETTINGS: BeideSettings = {
+const DEFAULT_SETTINGS: BeideSettings = {
   language: "ru",
   theme: "dark",
   permissionMode: "ask",

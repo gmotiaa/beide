@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { IconX } from "@tabler/icons-react";
+import { IconColumns2, IconMarkdown, IconX } from "@tabler/icons-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -10,11 +10,24 @@ import {
 } from "@/components/ui/tooltip";
 import { useEditorStore } from "../../stores/editor";
 
-export function TabBar() {
+interface TabBarProps {
+  /** Show the markdown preview toggle (active tab is markdown). */
+  mdPreviewAvailable?: boolean;
+  mdPreviewOn?: boolean;
+  onToggleMdPreview?: () => void;
+}
+
+export function TabBar({
+  mdPreviewAvailable = false,
+  mdPreviewOn = false,
+  onToggleMdPreview,
+}: TabBarProps) {
   const { t } = useTranslation();
   const tabs = useEditorStore((s) => s.tabs);
   const activePath = useEditorStore((s) => s.activePath);
+  const splitPath = useEditorStore((s) => s.splitPath);
   const setActive = useEditorStore((s) => s.setActive);
+  const setSplit = useEditorStore((s) => s.setSplit);
   const closeTab = useEditorStore((s) => s.closeTab);
 
   if (!tabs.length) return null;
@@ -78,6 +91,22 @@ export function TabBar() {
                   {tab.language}
                 </Badge>
               ) : null}
+              {active ? (
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={t("editor.splitRight")}
+                  aria-pressed={splitPath === tab.path}
+                  title={t("editor.splitRight")}
+                  className="tab__split"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSplit(splitPath === tab.path ? null : tab.path);
+                  }}
+                >
+                  <IconColumns2 className="size-3.5" stroke={2} />
+                </Button>
+              ) : null}
               <Button
                 variant="ghost"
                 size="icon-sm"
@@ -95,6 +124,20 @@ export function TabBar() {
             </div>
           );
         })}
+        {mdPreviewAvailable && onToggleMdPreview ? (
+          <div className="tab-bar__actions">
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-pressed={mdPreviewOn}
+              className={mdPreviewOn ? "text-primary" : undefined}
+              onClick={onToggleMdPreview}
+            >
+              <IconMarkdown className="size-3.5" stroke={1.75} />
+              {t("editor.mdPreview")}
+            </Button>
+          </div>
+        ) : null}
       </div>
     </TooltipProvider>
   );

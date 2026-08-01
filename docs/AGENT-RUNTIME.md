@@ -18,9 +18,29 @@ createAgentSession({
 })
 ```
 
-The system prompt is `systemBase + project rules + workspace tree snapshot`.
-Project rules come from `getRulesCandidates(cwd)` — `BEIDE.md` and
-`.beide/rules.md` in the **user's** workspace, not this repo.
+The system prompt is `systemBase + project rules + project memory + workspace
+tree snapshot`. Project rules come from `getRulesCandidates(cwd)` — `BEIDE.md`
+and `.beide/rules.md` in the **user's** workspace, not this repo. Project
+memory is `<workspace>/.beide/memory.md`, injected as "Project memory" when
+non-empty (`loadProjectMemory` in `electron/services/agent.ts`).
+
+The prompt itself carries an optional preamble, assembled in
+`electron/services/agent.ts` from the payload built by
+`electron/ipc.ts`'s `agent:prompt` handler: open-file context, then
+`## Editor diagnostics (open tabs)` from `payload.diagnostics` (Monaco markers
+collected by the renderer across open tabs), then
+`## Codebase search results (@codebase)` from `payload.codebaseContext` —
+resolved in the `agent:prompt` handler (not in `agent.ts`, to keep the agent
+service decoupled from the workspace walker) by running
+`WorkspaceService.searchContent()` per `@codebase` mention, lexical only,
+capped at 24 000 chars total.
+
+## `memory` tool
+
+Available in both modes (it only appends). Given a one-line fact, it appends
+`- <fact>` to `.beide/memory.md`, trimming the note to 500 chars. The file is
+capped at ~8 000 chars: when a note pushes it over, the oldest lines are
+dropped first — it is a working set, not an append-only log.
 
 Switching mode tears the session down and recreates it lazily. pi's in-memory
 transcript is *not* carried across that boundary — the UI transcript is the
@@ -54,6 +74,16 @@ otherwise in UI copy.
 Restore is available from the UI (`checkpoint:list` / `checkpoint:restore`).
 Checkpoint payloads are index-named (`entry_0000.json`) with the real relative
 path inside, and binary files are stored base64 (`encoding: "base64"`).
+
+## Secret file masking
+
+The `read` tool's file access is intercepted by `SECRET_FILE_RE` in
+`electron/services/agent.ts`: `.env*`, `*.pem`, and any `*secrets*`/
+`*credentials*` config (`.json`/`.yml`/`.yaml`/`.toml`/`.env`/`.txt`). A
+matching path is still read, but `maskSecretValues()` blanks out `KEY=value`
+and `"key": "value"` values (`***`) while leaving key names intact, and a
+`beide:warning` is emitted so the UI can surface it. This only guards the
+`read` tool's raw-filesystem path — it does not touch `bash`.
 
 ## Models and providers
 
@@ -92,6 +122,18 @@ count of every finished assistant message — the renderer charges the account
 with it (`spend_tokens`); the local estimate only pre-gates. pi's
 `auto_retry_start` is surfaced in the chat as "provider not responding,
 attempt N of M" (provider idle timeout 90 s, 2 retries).
+
+## One-shot completions (`AgentService.complete`)
+
+`complete()` is a non-agentic call straight to the gateway
+(`/chat/completions`, `stream: false`) — no pi session, no tools, no history.
+It reuses the same in-memory provider key as the agent. IPC: `ai:complete`.
+Callers: inline Ctrl+K edits in Monaco (`src/components/editor/EditorArea.tsx`
++ `inline-edit.ts`), ghost-text autocompletion
+(`src/components/editor/ghost-text.ts`), and git commit-message generation
+(`GitPanel`). `probeGateway()` is a cheap reachability check (`agent:health`)
+behind the status-bar "gateway unreachable" badge, polled every 90 s from the
+renderer.
 
 ## Event stream
 
@@ -133,8 +175,10 @@ both are covered by `npm test`.
 * `createAgentSession` has no `baseToolsOverride`; overriding by name through
   `customTools` is the supported trick.
 * Auth must already exist in `~/.pi/agent/auth.json` — there is no login UI.
-* `shell:run` is `cmd.exe /c` with a 30 s timeout, not a PTY. The terminal
-  panel is a command runner, not a full shell (no `node-pty`, no xterm.js).
+* `shell:run` (the agent's `bash` tool, also `window.beide.shell.run`) is
+  still `cmd.exe /c` with a 30 s timeout, not a PTY — that is separate from
+  the terminal panel, which now runs real PTY sessions (`terminal:*` IPC,
+  see [UI.md](UI.md) and [KNOWN-GAPS.md](KNOWN-GAPS.md)).
 * Recursive `fs.watch` is best-effort on Windows.
 * Long-running providers need generous HTTP timeouts — `undici`'s global
   dispatcher is configured once in `agent.ts` (60 s connect, 300 s body).

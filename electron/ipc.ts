@@ -189,7 +189,7 @@ function parseMentions(raw: unknown): ChatMention[] {
     if (out.length >= MAX_MENTIONS) break;
     if (!item || typeof item !== "object" || Array.isArray(item)) continue;
     const o = item as Record<string, unknown>;
-    if (o.type !== "file" && o.type !== "folder") continue;
+    if (o.type !== "file" && o.type !== "folder" && o.type !== "codebase") continue;
     if (typeof o.path !== "string" || o.path.length > LIMITS.path) continue;
     if (typeof o.name !== "string") continue;
     out.push({ type: o.type, path: o.path, name: o.name.slice(0, 255) });
@@ -216,6 +216,10 @@ function parsePromptPayload(raw: unknown): AgentPromptPayload {
     typeof o.activeFileContent === "string"
       ? o.activeFileContent.slice(0, 200_000)
       : undefined;
+  const diagnostics =
+    typeof o.diagnostics === "string" && o.diagnostics.trim()
+      ? o.diagnostics.slice(0, 8_000)
+      : undefined;
   return {
     text,
     mode,
@@ -224,6 +228,7 @@ function parsePromptPayload(raw: unknown): AgentPromptPayload {
     activeFile,
     activeFileContent,
     openFiles,
+    diagnostics,
   };
 }
 
@@ -327,7 +332,31 @@ export function registerIpc(
 
   // ── Agent ────────────────────────────────────────────────
   rehandle("agent:prompt", async (_e, payload: unknown) => {
-    return svc().agent.prompt(parsePromptPayload(payload));
+    const parsed = parsePromptPayload(payload);
+    // @codebase mentions resolve HERE (agent service stays decoupled from the
+    // workspace walker): lexical content search, results ride in as context.
+    const codebase = parsed.mentions.filter((m) => m.type === "codebase").slice(0, 3);
+    if (codebase.length) {
+      const blocks: string[] = [];
+      for (const mention of codebase) {
+        try {
+          const hits = await svc().workspace.searchContent(mention.path);
+          blocks.push(
+            `### @codebase "${mention.path}"\n` +
+              (hits.length
+                ? hits
+                    .slice(0, 60)
+                    .map((h) => `${h.path}:${h.line}: ${h.text}`)
+                    .join("\n")
+                : "(no matches)"),
+          );
+        } catch {
+          // no workspace — the prompt handler below reports that anyway
+        }
+      }
+      parsed.codebaseContext = blocks.join("\n\n").slice(0, 24_000);
+    }
+    return svc().agent.prompt(parsed);
   });
 
   rehandle("agent:abort", async () => {
@@ -368,6 +397,112 @@ export function registerIpc(
     // base64(iv || key || tag) — provider keys are short; 8 KiB is generous.
     const blob = asString(ciphertext, "ciphertext", 8192);
     return svc().agent.installEncryptedProviderKey(blob);
+  });
+
+  rehandle("agent:health", async () => svc().agent.probeGateway());
+
+  // ── One-shot AI completions (inline edit / ghost text / commit msg) ──
+  rehandle("ai:complete", async (_e, payload: unknown) => {
+    const p = asObject(payload, "payload") as {
+      prompt?: unknown;
+      system?: unknown;
+      model?: unknown;
+      maxTokens?: unknown;
+    };
+    return svc().agent.complete({
+      prompt: asString(p.prompt, "prompt", 64_000),
+      system: asOptionalString(p.system, "system", 16_000),
+      model: asOptionalString(p.model, "model", 128),
+      maxTokens:
+        typeof p.maxTokens === "number" && Number.isFinite(p.maxTokens)
+          ? p.maxTokens
+          : undefined,
+    });
+  });
+
+  // ── Git (panel) ─────────────────────────────────────────
+  // Paths come back out of `git status` itself; still reject shell
+  // metacharacters outright — commands run through cmd.exe.
+  const safeGitPath = (value: unknown, name: string): string => {
+    const p = asString(value, name, LIMITS.path);
+    if (/[&|<>^%"`$\r\n]/.test(p)) {
+      throw new IpcError(`${name} contains forbidden characters`, "INVALID_PATH");
+    }
+    return p;
+  };
+  const gitRoot = () => {
+    const root = svc().workspace.getRoot();
+    if (!root) throw new IpcError("No workspace open", "NO_WORKSPACE");
+    return root;
+  };
+
+  rehandle("git:status", async () => {
+    const root = gitRoot();
+    const [branch, status] = await Promise.all([
+      runShellCommand("git rev-parse --abbrev-ref HEAD", root, 15_000),
+      runShellCommand("git status --porcelain", root, 15_000),
+    ]);
+    return {
+      isRepo: branch.code === 0,
+      branch: branch.code === 0 ? branch.stdout.trim() : null,
+      // "XY path" porcelain lines; renderer parses
+      status: status.code === 0 ? status.stdout : "",
+    };
+  });
+
+  rehandle("git:stage", async (_e, path: unknown) => {
+    const p = safeGitPath(path, "path");
+    return runShellCommand(`git add -- "${p}"`, gitRoot(), 15_000);
+  });
+
+  rehandle("git:unstage", async (_e, path: unknown) => {
+    const p = safeGitPath(path, "path");
+    return runShellCommand(`git restore --staged -- "${p}"`, gitRoot(), 15_000);
+  });
+
+  rehandle("git:diff", async (_e, path: unknown, staged: unknown) => {
+    const p = safeGitPath(path, "path");
+    const flag = staged === true ? "--cached " : "";
+    const r = await runShellCommand(`git diff ${flag}-- "${p}"`, gitRoot(), 15_000);
+    return { diff: r.stdout.slice(0, 200_000) };
+  });
+
+  rehandle("git:commit", async (_e, message: unknown) => {
+    const msg = asString(message, "message", 4_000);
+    // The message goes through a temp file: quoting arbitrary text for
+    // cmd.exe safely is a losing game.
+    const root = gitRoot();
+    const tmp = join(
+      app.getPath("temp"),
+      `beide-commit-${process.pid}-${Date.now()}.txt`,
+    );
+    const { writeFile: writeTmp, rm: rmTmp } = await import("node:fs/promises");
+    await writeTmp(tmp, msg, "utf-8");
+    try {
+      return await runShellCommand(`git commit -F "${tmp}"`, root, 30_000);
+    } finally {
+      await rmTmp(tmp, { force: true }).catch(() => undefined);
+    }
+  });
+
+  // ── Checkpoint diff entries (agent-changes view) ────────
+  rehandle("checkpoint:entries", async (_e, id: unknown) => {
+    const cid = asString(id, "id", 128);
+    const entries = await svc().checkpoints.entries(cid);
+    // Pair each snapshot with the file's CURRENT content for diffing.
+    const out = [];
+    for (const entry of entries) {
+      let after: string | null = null;
+      if (!entry.binary) {
+        try {
+          after = await svc().workspace.readFile(entry.path);
+        } catch {
+          after = null; // deleted since
+        }
+      }
+      out.push({ ...entry, after });
+    }
+    return out;
   });
 
   // ── Checkpoints ──────────────────────────────────────────
@@ -416,6 +551,16 @@ export function registerIpc(
     const session = await svc().sessions.create(s.defaultAgentMode);
     await svc().agent.onSessionChanged(session.id, []);
     return session;
+  });
+
+  rehandle("session:import", async (_e, info: unknown, messages: unknown) => {
+    const o = asObject(info, "info") as { id?: unknown; title?: unknown; mode?: unknown };
+    const sid = asString(o.id, "info.id", 128);
+    const title = typeof o.title === "string" ? o.title : "New chat";
+    const mode = o.mode === "plan" ? "plan" : "agent";
+    const msgs = asChatMessages(messages, "messages", LIMITS.sessionMessages);
+    await svc().sessions.importSession({ id: sid, title, mode }, msgs);
+    return { ok: true };
   });
 
   rehandle("session:save", async (_e, id: unknown, messages: unknown) => {

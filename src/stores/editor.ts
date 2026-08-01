@@ -7,17 +7,23 @@ import { fileNameFromPath, languageFromPath } from "../lib/language";
 interface EditorState {
   tabs: EditorTab[];
   activePath: string | null;
+  /** Tab shown in the right split pane; null = single-editor layout. */
+  splitPath: string | null;
   cursorLine: number;
   cursorCol: number;
   monaco: MonacoEditor.IStandaloneCodeEditor | null;
   opening: boolean;
   lastError: string | null;
+  /** "file:line [severity] message" lines from Monaco markers, for the agent. */
+  diagnostics: string;
 
   setMonaco: (ed: MonacoEditor.IStandaloneCodeEditor | null) => void;
+  setDiagnostics: (text: string) => void;
   setCursor: (line: number, col: number) => void;
   openFile: (path: string) => Promise<void>;
   closeTab: (path: string) => void;
   setActive: (path: string) => void;
+  setSplit: (path: string | null) => void;
   updateContent: (path: string, content: string) => void;
   saveActive: () => Promise<void>;
   savePath: (path: string) => Promise<void>;
@@ -58,13 +64,19 @@ let workspaceEpoch = 0;
 export const useEditorStore = create<EditorState>((set, get) => ({
   tabs: [],
   activePath: null,
+  splitPath: null,
   cursorLine: 1,
   cursorCol: 1,
   monaco: null,
   opening: false,
   lastError: null,
+  diagnostics: "",
 
   setMonaco: (ed) => set({ monaco: ed }),
+
+  setDiagnostics: (text) => {
+    if (get().diagnostics !== text) set({ diagnostics: text });
+  },
 
   setCursor: (line, col) => set({ cursorLine: line, cursorCol: col }),
 
@@ -75,6 +87,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     set({
       tabs: [],
       activePath: null,
+      splitPath: null,
       cursorLine: 1,
       cursorCol: 1,
       monaco: null,
@@ -103,6 +116,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         };
       }),
       activePath: state.activePath ? remap(state.activePath) : null,
+      splitPath: state.splitPath ? remap(state.splitPath) : null,
     }));
   },
 
@@ -116,7 +130,11 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         state.activePath && isPathTreeEntry(state.activePath, root)
           ? (tabs[0]?.path ?? null)
           : state.activePath;
-      return { tabs, activePath };
+      const splitPath =
+        state.splitPath && isPathTreeEntry(state.splitPath, root)
+          ? null
+          : state.splitPath;
+      return { tabs, activePath, splitPath };
     });
   },
 
@@ -162,11 +180,15 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         const neighbor = tabs[Math.min(idx, tabs.length - 1)] ?? null;
         activePath = neighbor?.path ?? null;
       }
-      return { tabs, activePath };
+      // Closing the tab that backs the split pane closes the split too.
+      const splitPath = s.splitPath === path ? null : s.splitPath;
+      return { tabs, activePath, splitPath };
     });
   },
 
   setActive: (path) => set({ activePath: path }),
+
+  setSplit: (path) => set({ splitPath: path }),
 
   updateContent: (path, content) => {
     set((s) => ({

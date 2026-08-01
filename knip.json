@@ -10,5 +10,6 @@
   ],
   "project": ["src/**/*.{ts,tsx}", "electron/**/*.ts", "scripts/**/*.mjs"],
   "ignore": [".design-sync/**", "website/**", "src/lib/database.types.ts"],
-  "ignoreDependencies": ["monaco-editor"]
+  "_comment": "shadcn/tailwindcss/tw-animate-css look unused to knip but are pulled in via CSS @import in src/styles/global.css",
+  "ignoreDependencies": ["monaco-editor", "tailwindcss", "tw-animate-css", "shadcn"]
 }

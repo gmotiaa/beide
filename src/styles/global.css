@@ -427,6 +427,8 @@ pre,
   display: flex;
   flex-direction: column;
   background: var(--bg);
+  /* Anchor for the agent-changes diff overlay (see block at end of file). */
+  position: relative;
 }
 
 .tab-bar {
@@ -995,6 +997,78 @@ pre,
   color: var(--text-muted);
 }
 
+.terminal-panel__title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.terminal-panel__header-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.terminal-panel__tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+
+.terminal-panel__tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 20px;
+  padding: 0 2px 0 8px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+
+.terminal-panel__tab:hover {
+  background: var(--panel-hover);
+  color: var(--text);
+}
+
+.terminal-panel__tab.is-active {
+  background: var(--bg-elevated, var(--bg));
+  border-color: var(--border-subtle);
+  color: var(--text);
+}
+
+.terminal-panel__tab-label {
+  padding-right: 2px;
+}
+
+.terminal-panel__tab-close {
+  width: 16px !important;
+  height: 16px !important;
+  min-width: 16px !important;
+  border-radius: 999px !important;
+}
+
+.terminal-panel__tab-add {
+  width: 20px !important;
+  height: 20px !important;
+  min-width: 20px !important;
+  border-radius: 999px !important;
+  border: 1px dashed var(--border-subtle) !important;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
 .terminal-panel__body {
   flex: 1;
   min-height: 0;
@@ -1023,67 +1097,25 @@ pre,
 .terminal-panel__xterm {
   flex: 1;
   min-height: 0;
+  position: relative;
 }
 
-.terminal-panel__xterm .xterm,
-.terminal-panel__xterm .xterm-viewport {
+/* Each tab gets its own mount div, stacked in the same host; only the
+   active one is display:block (others display:none, see the inline style
+   in TerminalPanel.tsx) so buffers survive switching tabs. */
+.terminal-panel__xterm-pane {
+  position: absolute;
+  inset: 0;
+}
+
+.terminal-panel__xterm-pane .xterm,
+.terminal-panel__xterm-pane .xterm-viewport {
   height: 100%;
 }
 
-.terminal-panel__body .term-out {
-  color: var(--text);
-}
-.terminal-panel__body .term-err {
-  color: var(--danger);
-}
+/* term-meta is the only line style the PTY terminal still renders. */
 .terminal-panel__body .term-meta {
   color: var(--text-faint);
-}
-.terminal-panel__body .term-cmd {
-  color: var(--accent-hover);
-}
-
-.terminal-panel__cwd {
-  font-weight: 400;
-  text-transform: none;
-  letter-spacing: 0;
-  color: var(--text-faint);
-}
-
-.terminal-panel__prompt {
-  color: var(--accent);
-  font-family: "Cascadia Code", Consolas, monospace;
-  font-size: 14px;
-  line-height: 28px;
-  flex-shrink: 0;
-}
-
-.terminal-panel__input-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px 8px;
-  border-top: 1px solid var(--border-subtle);
-  flex-shrink: 0;
-}
-
-.terminal-panel__input-row input {
-  flex: 1;
-  height: 28px;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--panel);
-  padding: 0 10px;
-  outline: none;
-  font-family:
-    "Cascadia Code",
-    Consolas,
-    monospace;
-  font-size: 12px;
-}
-
-.terminal-panel__input-row input:focus {
-  border-color: var(--accent-border);
 }
 
 /* File tree (reui c-tree-5 style) */
@@ -1178,4 +1210,283 @@ pre,
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   Editor additions: agent-changes bar + checkpoint diff overlay,
+   markdown preview, split view, tab-bar actions.
+   (Appended block — keep editor-related additions together here.)
+   ══════════════════════════════════════════════════════════════ */
+
+/* "Changes by agent" bar (under the TabBar) */
+.editor-agent-bar {
+  flex-shrink: 0;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.editor-agent-bar__summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 28px;
+  padding: 0 10px;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.editor-agent-bar__summary:hover {
+  background: var(--panel-hover);
+  color: var(--text);
+}
+
+.editor-agent-bar__chevron {
+  margin-left: auto;
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+
+.editor-agent-bar__list {
+  max-height: 220px;
+  overflow-y: auto;
+  border-top: 1px solid var(--border-subtle);
+  padding: 8px 10px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.editor-agent-checkpoint__meta {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--text);
+  min-width: 0;
+}
+
+.editor-agent-checkpoint__meta strong {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-agent-checkpoint__time {
+  color: var(--text-faint);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.editor-agent-checkpoint__files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.editor-agent-file {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.editor-agent-file:hover {
+  color: var(--text);
+  border-color: var(--accent-border);
+  background: var(--accent-muted);
+}
+
+.editor-agent-bar__error,
+.editor-agent-diff__error {
+  color: var(--danger);
+  font-size: 12px;
+  margin: 0;
+}
+
+.editor-agent-diff__error {
+  padding: 6px 14px 0;
+}
+
+/* Checkpoint diff overlay — modal-ish, inside .editor-area */
+.editor-agent-diff {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  padding: 20px;
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
+}
+
+.editor-agent-diff__panel {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.editor-agent-diff__header {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px 8px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.editor-agent-diff__title {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.editor-agent-diff__title strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-agent-diff__title span {
+  font-size: 11px;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-agent-diff__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.editor-agent-diff__body {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+
+.editor-agent-diff__host {
+  height: 100%;
+  width: 100%;
+}
+
+.editor-agent-diff__note {
+  padding: 24px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+/* Markdown preview (replaces the Monaco surface for markdown tabs) */
+.editor-md-preview {
+  height: 100%;
+  overflow-y: auto;
+  background: var(--bg);
+}
+
+.editor-md-preview__inner {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+/* Split view — two editors side by side, 1px divider from the gap */
+.editor-split {
+  display: flex;
+  gap: 1px;
+  background: var(--border);
+}
+
+.editor-split__pane {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--monaco-bg);
+}
+
+.editor-split__strip {
+  flex-shrink: 0;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 4px 0 10px;
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.editor-split__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.editor-split__editor {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+
+/* Split pane hosts its own Monaco wrapper — size it like .editor-host does */
+.editor-split__pane > section,
+.editor-split__editor > section,
+.editor-split__editor > div {
+  height: 100% !important;
+  width: 100% !important;
+}
+
+/* Right-aligned actions in the tab bar (markdown preview toggle) */
+.tab-bar__actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px;
+  position: sticky;
+  right: 0;
+  background: var(--bg-elevated);
+  border-left: 1px solid var(--border-subtle);
+}
+
+/* Split toggle on the active tab mirrors the close button's reveal */
+.tab__split {
+  flex-shrink: 0 !important;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  width: 22px !important;
+  height: 22px !important;
+  min-width: 22px !important;
+}
+
+.tab:hover .tab__split,
+.tab.is-active .tab__split {
+  opacity: 1;
 }

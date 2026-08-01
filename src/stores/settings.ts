@@ -5,7 +5,7 @@ import { getBeide } from "../lib/ipc";
 import i18n, { setAppLanguage } from "../i18n";
 import { useEditorStore } from "./editor";
 
-export const SETTINGS_DEFAULTS: BeideSettings = {
+const SETTINGS_DEFAULTS: BeideSettings = {
   language: "ru",
   theme: "dark",
   permissionMode: "ask",

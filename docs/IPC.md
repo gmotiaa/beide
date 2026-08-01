@@ -33,15 +33,27 @@ the preload without a reason: it is the whitelist for main → renderer pushes.
 | `agent:respondPermission` | `agent.respondPermission(id, allow, content?)` | answers an `agent:permission` push |
 | `agent:getStatus` | `agent.getStatus()` | `{ ready, streaming, mode, model? }` |
 | `agent:getProviders` | `agent.getProviders()` | `ProviderStatus[]` — connection state only, never tokens |
+| `agent:health` | `agent.probeGateway()` | `{ ok, latencyMs }` — cheap reachability probe behind the status-bar badge, polled every 90 s |
+| `ai:complete` | `agent.complete(payload)` | one-shot non-agentic completion (no session, no tools); powers Ctrl+K inline edit, ghost text, commit-message generation |
 | `checkpoint:list` / `checkpoint:restore` | same | |
+| `checkpoint:entries` | `checkpoint.entries(id)` | per-file snapshot paired with current content, for the agent-changes diff view |
 | `settings:get` / `settings:set` | same | `set` returns the merged settings |
 | `session:list` | `session.list()` | newest first |
 | `session:active` | `session.active()` | id main is currently appending to, or `null` |
 | `session:load` | `session.load(id)` | also makes that session active |
 | `session:new` | `session.new()` | creates the file and makes it active |
 | `session:save` | `session.save(id, messages)` | full replace of the transcript |
+| `session:import` | `session.import(info, messages)` | writes a session file wholesale — used to restore a cloud-only chat into `.beide/sessions/` |
 | `session:delete` | `session.delete(id)` | |
-| `shell:run` | `shell.run(command)` | `cmd.exe /c` on Windows, 30 s timeout — not a PTY |
+| `shell:run` | `shell.run(command)` | `cmd.exe /c` on Windows, 30 s timeout — not a PTY; this is the agent's `bash` tool path, unrelated to the terminal panel |
+| `git:status` | `git.status()` | `{ isRepo, branch, status }` — `status` is porcelain output, parsed by the renderer |
+| `git:stage` / `git:unstage` | `git.stage(path)` / `git.unstage(path)` | |
+| `git:diff` | `git.diff(path, staged?)` | `{ diff }`, capped at 200 000 chars |
+| `git:commit` | `git.commit(message)` | message goes through a temp file, not shell-quoted |
+| `terminal:create` | `terminal.create(cols, rows)` | `{ id }` — spawns a ConPTY in the workspace root |
+| `terminal:write` | `terminal.write(id, data)` | keystrokes/paste to the pty |
+| `terminal:resize` | `terminal.resize(id, cols, rows)` | |
+| `terminal:kill` | `terminal.kill(id)` | |
 | `usage:get` / `usage:increment` | same | local plan + rolling windows |
 | `usage:setPlan` / `usage:addCredits` / `usage:reset` | same | local-only debug mutations; cloud billing still goes through Supabase RPCs |
 | `window:minimize` / `maximize` / `close` / `isMaximized` | same | custom title bar |
@@ -61,6 +73,8 @@ Whitelisted in `electron/preload.ts` → `ALLOWED_EVENTS`:
 | `agent:permission` | `PermissionRequest` | `useAgentStore` → `DiffModal` |
 | `workspace:changed` | `{ path?: string, paths?: string[], restored?: string }` | file tree refresh + reload of non-dirty tabs; restore refreshes every clean tab |
 | `window:close-requested` | `{ dirty: boolean }` | main pauses close so renderer can flush chat and, when needed, confirm dirty editor buffers |
+| `terminal:data` | `{ id: string, data: string }` | `TerminalPanel` writes it into the xterm instance matching `id` |
+| `terminal:exit` | `{ id: string, exitCode: number }` | marks that session dead; the next keystroke spawns a fresh shell |
 
 Subscribe with `window.beide.on(channel, cb)`; it returns an unsubscribe
 function — always call it in the effect cleanup.

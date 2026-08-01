@@ -49,7 +49,8 @@ export interface ChatImage {
 }
 
 export interface ChatMention {
-  type: "file" | "folder";
+  /** "codebase" carries a search query in `path` (lexical content search). */
+  type: "file" | "folder" | "codebase";
   path: string;
   name: string;
 }
@@ -106,6 +107,10 @@ export interface AgentPromptPayload {
   activeFile?: string;
   activeFileContent?: string;
   openFiles?: string[];
+  /** Editor diagnostics ("file:line message" lines) for open tabs. */
+  diagnostics?: string;
+  /** Resolved @codebase search results, filled in by main's IPC handler. */
+  codebaseContext?: string;
 }
 
 export interface BeideApi {
@@ -131,10 +136,35 @@ export interface BeideApi {
     getStatus: () => Promise<{ ready: boolean; streaming: boolean; mode: AgentMode; model?: string }>;
     getProviders: () => Promise<ProviderStatus[]>;
     installProviderKey: (ciphertext: string) => Promise<{ ok: boolean; error?: string }>;
+    health: () => Promise<{ ok: boolean; latencyMs: number | null }>;
+  };
+  ai: {
+    complete: (payload: {
+      prompt: string;
+      system?: string;
+      model?: string;
+      maxTokens?: number;
+    }) => Promise<{ ok: boolean; text?: string; error?: string }>;
+  };
+  git: {
+    status: () => Promise<{ isRepo: boolean; branch: string | null; status: string }>;
+    stage: (path: string) => Promise<{ code: number; stdout: string; stderr: string }>;
+    unstage: (path: string) => Promise<{ code: number; stdout: string; stderr: string }>;
+    diff: (path: string, staged?: boolean) => Promise<{ diff: string }>;
+    commit: (message: string) => Promise<{ code: number; stdout: string; stderr: string }>;
   };
   checkpoint: {
     list: () => Promise<CheckpointInfo[]>;
     restore: (id: string) => Promise<string[]>;
+    entries: (id: string) => Promise<
+      Array<{
+        path: string;
+        existed: boolean;
+        before: string | null;
+        after: string | null;
+        binary: boolean;
+      }>
+    >;
   };
   settings: {
     get: () => Promise<BeideSettings>;
@@ -146,6 +176,10 @@ export interface BeideApi {
     load: (id: string) => Promise<ChatMessage[]>;
     new: () => Promise<SessionInfo>;
     save: (id: string, messages: ChatMessage[]) => Promise<{ ok: boolean }>;
+    import: (
+      info: { id: string; title: string; mode: AgentMode },
+      messages: ChatMessage[],
+    ) => Promise<{ ok: boolean }>;
     delete: (id: string) => Promise<{ ok: boolean }>;
   };
   shell: {

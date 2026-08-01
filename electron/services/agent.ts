@@ -184,6 +184,7 @@ function buildSystemPrompt(mode: AgentMode): string {
     "- workspace_map — быстрая карта проекта (топ-уровневые папки + ключевые файлы). Предпочтительнее серии ls.",
     "- project_info — package.json (scripts, deps) одним вызовом.",
     "- git_status — git status/branch/diff --stat (readonly).",
+    "- memory — сохранить долговременный факт о проекте (архитектура, соглашения, грабли). Коротко, одна строка; попадёт в system prompt следующих сессий.",
     "",
     "## Как работать в IDE",
     "1. Смотри Editor context (Active file / Open tabs) и Workspace file tree snapshot — это уже в system prompt.",
@@ -225,6 +226,20 @@ function buildSystemPrompt(mode: AgentMode): string {
     );
   }
   return base.join("\n");
+}
+
+/** Agent-maintained long-term notes, appended via the `memory` tool. */
+const MEMORY_REL_PATH = ".beide/memory.md";
+const MEMORY_MAX_CHARS = 8_000;
+
+async function loadProjectMemory(cwd: string): Promise<string> {
+  try {
+    const text = await readFile(join(cwd, MEMORY_REL_PATH), "utf-8");
+    if (!text.trim()) return "";
+    return `# Project memory (agent-maintained, ${MEMORY_REL_PATH})\n${text.trim().slice(-MEMORY_MAX_CHARS)}`;
+  } catch {
+    return "";
+  }
 }
 
 async function loadProjectRules(cwd: string): Promise<string> {
@@ -669,9 +684,19 @@ export class AgentService {
         payload.activeFile,
         payload.activeFileContent,
       );
+      // Editor diagnostics ride along so the agent sees the same squiggles the
+      // user does — before AND after its own edits (the next prompt refreshes).
+      const diagnosticsBlock = payload.diagnostics
+        ? `## Editor diagnostics (open tabs)\n${payload.diagnostics}\n\n`
+        : "";
+      const codebaseBlock = payload.codebaseContext
+        ? `## Codebase search results (@codebase)\n${payload.codebaseContext}\n\n`
+        : "";
       const preamble = [
         openFilesPreamble(payload.activeFile, payload.openFiles),
         activeSnippet,
+        diagnosticsBlock,
+        codebaseBlock,
         mentionsPreamble(payload.mentions ?? []),
       ]
         .filter(Boolean)
@@ -919,6 +944,69 @@ export class AgentService {
     return { ok: true };
   }
 
+  /**
+   * One-shot, non-agentic completion straight against the gateway — powers
+   * inline edits, ghost-text and commit messages, where spinning up a pi
+   * session (system prompt + tools + history) would be pure overhead. Uses
+   * the same in-memory key as the agent; the renderer never sees it.
+   */
+  async complete(opts: {
+    prompt: string;
+    system?: string;
+    model?: string;
+    maxTokens?: number;
+  }): Promise<{ ok: boolean; text?: string; error?: string }> {
+    const key = this.effectiveEchogateKey();
+    if (!key) return { ok: false, error: "Provider key not available yet" };
+    const model = findModel(opts.model ?? "")?.id ?? "gemini-3.6-flash";
+    const messages: Array<{ role: string; content: string }> = [];
+    if (opts.system) messages.push({ role: "system", content: opts.system });
+    messages.push({ role: "user", content: opts.prompt });
+    try {
+      ensureHttpDispatcher();
+      const res = await fetch(`${ECHOGATE_BASE_URL}/chat/completions`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${key}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model,
+          messages,
+          max_tokens: Math.min(Math.max(opts.maxTokens ?? 1024, 16), 8192),
+          stream: false,
+        }),
+        signal: AbortSignal.timeout(45_000),
+      });
+      if (!res.ok) {
+        return { ok: false, error: `Gateway ${res.status}: ${(await res.text()).slice(0, 300)}` };
+      }
+      const json = (await res.json()) as {
+        choices?: Array<{ message?: { content?: string } }>;
+      };
+      const text = json.choices?.[0]?.message?.content;
+      if (typeof text !== "string" || !text) {
+        return { ok: false, error: "Gateway returned no content" };
+      }
+      return { ok: true, text };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /** Cheap reachability probe for the status-bar health badge. */
+  async probeGateway(): Promise<{ ok: boolean; latencyMs: number | null }> {
+    const started = Date.now();
+    try {
+      const res = await fetch(ECHOGATE_BASE_URL.replace(/\/v1\/?$/, "/"), {
+        signal: AbortSignal.timeout(6_000),
+      });
+      return { ok: res.ok, latencyMs: Date.now() - started };
+    } catch {
+      return { ok: false, latencyMs: null };
+    }
+  }
+
   private async ensureRuntime(): Promise<ModelRuntime> {
     ensureHttpDispatcher();
     const echogateKey = this.effectiveEchogateKey();
@@ -1111,9 +1199,11 @@ export class AgentService {
     });
 
     const rules = await loadProjectRules(cwd);
+    const memory = await loadProjectMemory(cwd);
     const treeSnap = await buildWorkspaceTreeSnapshot(cwd);
-    const systemBase = buildSystemPrompt(this.mode);
-    const systemPrompt = [systemBase, rules, treeSnap].filter(Boolean).join("\n\n");
+    const systemPrompt = [buildSystemPrompt(this.mode), rules, memory, treeSnap]
+      .filter(Boolean)
+      .join("\n\n");
 
     const resourceLoader = new DefaultResourceLoader({
       cwd,
@@ -1140,6 +1230,7 @@ export class AgentService {
             "workspace_map",
             "project_info",
             "git_status",
+            "memory",
           ]
         : [
             "read",
@@ -1154,6 +1245,7 @@ export class AgentService {
             "workspace_map",
             "project_info",
             "git_status",
+            "memory",
           ];
 
     const { session, modelFallbackMessage } = await createAgentSession({
@@ -1316,6 +1408,17 @@ export class AgentService {
     const readOps = {
       readFile: async (absolutePath: string) => {
         const safePath = await resolveRealInWorkspace(cwd, toWorkspaceRelative(cwd, absolutePath));
+        // Secret guard: .env and friends reach the model (and thus the
+        // provider) verbatim otherwise. Values are masked, key names stay —
+        // enough for the agent to reason about config without exfiltrating it.
+        if (SECRET_FILE_RE.test(safePath)) {
+          const text = (await readFile(safePath)).toString("utf-8");
+          this.emit({
+            type: "beide:warning",
+            message: `Агент читает файл с секретами (${rel(safePath)}) — значения замаскированы.`,
+          });
+          return Buffer.from(maskSecretValues(text), "utf-8");
+        }
         return readFile(safePath);
       },
       access: async (absolutePath: string) => {
@@ -1536,6 +1639,48 @@ export class AgentService {
       },
     });
 
+    const memoryTool = defineTool({
+      name: "memory",
+      label: "Memory",
+      description:
+        "Append a durable project fact to the agent memory (.beide/memory.md): architecture decisions, conventions, gotchas. One short line per fact; it is injected into future system prompts.",
+      promptSnippet: "memory: save a durable project fact for future sessions",
+      parameters: Type.Object({
+        note: Type.String({ description: "One concise fact, plain text" }),
+      }),
+      async execute(_id, params) {
+        const note = params.note.trim().replace(/\s+/g, " ").slice(0, 500);
+        if (!note) {
+          return {
+            content: [{ type: "text" as const, text: "Empty note ignored." }],
+            details: { note: "" },
+          };
+        }
+        const abs = join(cwd, MEMORY_REL_PATH);
+        let current = "";
+        try {
+          current = await readFile(abs, "utf-8");
+        } catch {
+          // first note
+        }
+        let next = `${current.trimEnd()}\n- ${note}\n`.trimStart();
+        // Oldest lines fall off — memory is a working set, not an archive.
+        if (next.length > MEMORY_MAX_CHARS) {
+          const lines = next.split("\n");
+          while (lines.length > 1 && lines.join("\n").length > MEMORY_MAX_CHARS) {
+            lines.shift();
+          }
+          next = lines.join("\n");
+        }
+        await mkdir(dirname(abs), { recursive: true });
+        await writeFile(abs, next, "utf-8");
+        return {
+          content: [{ type: "text" as const, text: `Remembered: ${note}` }],
+          details: { note },
+        };
+      },
+    });
+
     const gitStatusTool = defineTool({
       name: "git_status",
       label: "Git status",
@@ -1596,6 +1741,7 @@ export class AgentService {
       workspaceMapTool,
       projectInfoTool,
       gitStatusTool,
+      memoryTool,
     ];
   }
 
@@ -1646,6 +1792,17 @@ const SECRET_ENV_KEYS = new Set([
   "SUPABASE_SERVICE_ROLE_KEY",
 ]);
 const SECRET_ENV_RE = /_API_KEY$|_KEY$|TOKEN|SECRET|PASSWORD|PASSWD/i;
+
+/** Files whose contents are masked before they reach the model. */
+const SECRET_FILE_RE =
+  /(^|[\\/])\.env(\.[^\\/]*)?$|\.pem$|(^|[\\/])[^\\/]*(secrets?|credentials)[^\\/]*\.(json|ya?ml|toml|env|txt)$/i;
+
+/** `KEY=value` / `"key": "value"`-style values become ***; key names survive. */
+function maskSecretValues(text: string): string {
+  return text
+    .replace(/^(\s*(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*\s*=\s*).+$/gm, "$1***")
+    .replace(/("[^"]*(?:key|token|secret|password)[^"]*"\s*:\s*)"[^"]*"/gi, '$1"***"');
+}
 
 /** Shared with the PTY terminal — any user-visible shell gets the same env hygiene. */
 export function stripSecretEnv(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {

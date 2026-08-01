@@ -8,7 +8,7 @@ export function getPiAgentDir(): string {
 }
 
 /** Workspace-local beide metadata root. */
-export function getBeideRoot(workspaceRoot: string): string {
+function getBeideRoot(workspaceRoot: string): string {
   return join(workspaceRoot, ".beide");
 }
 

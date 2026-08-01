@@ -14,6 +14,34 @@ export type ModelPickerProps = {
   className?: string;
 };
 
+const RECENT_MODELS_KEY = "beide.recentModels";
+const RECENT_MODELS_LIMIT = 3;
+
+function readRecentModelIds(): string[] {
+  try {
+    const raw = localStorage.getItem(RECENT_MODELS_KEY);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((id): id is string => typeof id === "string");
+  } catch {
+    return [];
+  }
+}
+
+function pushRecentModelId(id: string): string[] {
+  const next = [id, ...readRecentModelIds().filter((existingId) => existingId !== id)].slice(
+    0,
+    RECENT_MODELS_LIMIT,
+  );
+  try {
+    localStorage.setItem(RECENT_MODELS_KEY, JSON.stringify(next));
+  } catch {
+    // Ignore storage failures (quota, privacy mode, unavailable API).
+  }
+  return next;
+}
+
 export const ModelPicker = memo(function ModelPicker({
   models,
   value,
@@ -29,15 +57,21 @@ export const ModelPicker = memo(function ModelPicker({
   const activeId = isControlled ? value : internalValue;
   const activeModel = models.find((m) => m.id === activeId) ?? models[0];
   const [open, setOpen] = useState(false);
+  const [recentIds, setRecentIds] = useState<string[]>(() => readRecentModelIds());
 
   const handleSelect = useCallback(
     (id: string) => {
       if (!isControlled) setInternalValue(id);
       onChange?.(id);
       setOpen(false);
+      setRecentIds(pushRecentModelId(id));
     },
     [isControlled, onChange],
   );
+
+  const recentModels = recentIds
+    .map((id) => models.find((m) => m.id === id))
+    .filter((m): m is ModelOption => Boolean(m));
 
   return (
     <Popover
@@ -70,6 +104,22 @@ export const ModelPicker = memo(function ModelPicker({
       {/* 19 models × 9 groups outgrow the screen as a plain popup — cap the
           height to the viewport and scroll inside instead. */}
       <div className="max-h-[min(340px,55vh)] overflow-y-auto overscroll-contain p-1">
+        {recentModels.length > 0 && (
+          <div>
+            <div className="px-2 pb-px pt-1 text-[9px] font-semibold uppercase tracking-[0.08em] text-foreground/30 select-none">
+              {t("agentElements.recentModels")}
+            </div>
+            {recentModels.map((model) => (
+              <ModelOptionButton
+                key={`recent-${model.id}`}
+                model={model}
+                isActive={model.id === activeModel?.id}
+                onSelect={handleSelect}
+                t={t}
+              />
+            ))}
+          </div>
+        )}
         {models.map((model, index) => {
           const isActive = model.id === activeModel?.id;
           const groupStart =
@@ -86,36 +136,12 @@ export const ModelPicker = memo(function ModelPicker({
                   {model.group}
                 </div>
               )}
-              <button
-                type="button"
-                disabled={model.disabled}
-                title={model.disabled ? t("agentElements.modelUnavailable") : undefined}
-                onClick={model.disabled ? undefined : () => handleSelect(model.id)}
-                className={cn(
-                  "flex w-full items-center gap-2 rounded-[6px] px-2 py-1 text-left text-[12px] leading-4 text-an-foreground transition-colors",
-                  model.disabled
-                    ? "cursor-not-allowed text-foreground/25"
-                    : "hover:bg-foreground/6 cursor-pointer",
-                  isActive && "bg-foreground/6",
-                )}
-              >
-                <span className="flex-1 truncate">
-                  {model.name}
-                  {model.version && (
-                    <span
-                      className={cn(
-                        "ml-1",
-                        model.disabled ? "text-foreground/20" : "text-foreground/40",
-                      )}
-                    >
-                      {model.version}
-                    </span>
-                  )}
-                </span>
-                {isActive && (
-                  <IconCheck className="size-3.5 shrink-0 text-foreground/60" />
-                )}
-              </button>
+              <ModelOptionButton
+                model={model}
+                isActive={isActive}
+                onSelect={handleSelect}
+                t={t}
+              />
             </div>
           );
         })}
@@ -123,6 +149,48 @@ export const ModelPicker = memo(function ModelPicker({
     </Popover>
   );
 });
+
+type ModelOptionButtonProps = {
+  model: ModelOption;
+  isActive: boolean;
+  onSelect: (id: string) => void;
+  t: (key: string) => string;
+};
+
+function ModelOptionButton({ model, isActive, onSelect, t }: ModelOptionButtonProps) {
+  return (
+    <button
+      type="button"
+      disabled={model.disabled}
+      title={model.disabled ? t("agentElements.modelUnavailable") : undefined}
+      onClick={model.disabled ? undefined : () => onSelect(model.id)}
+      className={cn(
+        "flex w-full items-center gap-2 rounded-[6px] px-2 py-1 text-left text-[12px] leading-4 text-an-foreground transition-colors",
+        model.disabled
+          ? "cursor-not-allowed text-foreground/25"
+          : "hover:bg-foreground/6 cursor-pointer",
+        isActive && "bg-foreground/6",
+      )}
+    >
+      <span className="flex-1 truncate">
+        {model.name}
+        {model.version && (
+          <span
+            className={cn(
+              "ml-1",
+              model.disabled ? "text-foreground/20" : "text-foreground/40",
+            )}
+          >
+            {model.version}
+          </span>
+        )}
+      </span>
+      {isActive && (
+        <IconCheck className="size-3.5 shrink-0 text-foreground/60" />
+      )}
+    </button>
+  );
+}
 
 export type ModelBadgeProps = {
   models: ModelOption[];

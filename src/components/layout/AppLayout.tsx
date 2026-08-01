@@ -8,10 +8,12 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { ActivityBar, type ActivityId } from "./ActivityBar";
+import { CommandPalette } from "./CommandPalette";
 import { StatusBar } from "./StatusBar";
 import { TitleBar } from "./TitleBar";
 import { FileTree } from "../sidebar/FileTree";
 import { SearchPanel } from "../sidebar/SearchPanel";
+import { GitPanel } from "../git/GitPanel";
 import { ChatPanel } from "../chat/ChatPanel";
 import { DiffModal } from "../diff/DiffModal";
 import { SettingsView } from "../settings/SettingsView";
@@ -46,6 +48,7 @@ export function AppLayout() {
   const [chatOpen, setChatOpen] = useState(true);
   const [termOpen, setTermOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [paletteOpen, setPaletteOpen] = useState(false);
 
   const bootstrap = useWorkspaceStore((s) => s.bootstrap);
   const refreshTree = useWorkspaceStore((s) => s.refreshTree);
@@ -122,6 +125,11 @@ export function AppLayout() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (e.key === "F1") {
+        e.preventDefault();
+        setPaletteOpen((v) => !v);
+        return;
+      }
       const mod = e.ctrlKey || e.metaKey;
       if (!mod) return;
       // `e.key` follows the OS layout: on ЙЦУКЕН Ctrl+S arrives as "ы" and
@@ -129,6 +137,13 @@ export function AppLayout() {
       // so they work on Cyrillic layouts too.
       const is = (letter: string, code: string) =>
         e.key.toLowerCase() === letter || e.code === code;
+      // Ctrl/Cmd+Shift+P: command palette. preventDefault before anything
+      // else so the devtools shortcut never wins over the palette.
+      if (e.shiftKey && is("p", "KeyP")) {
+        e.preventDefault();
+        setPaletteOpen((v) => !v);
+        return;
+      }
       if (is("s", "KeyS")) {
         e.preventDefault();
         void saveActive();
@@ -212,11 +227,19 @@ export function AppLayout() {
                 <span>
                   {activity === "search"
                     ? t("sidebar.searchFiles")
-                    : t("sidebar.explorer")}
+                    : activity === "git"
+                      ? t("git.title")
+                      : t("sidebar.explorer")}
                 </span>
               </div>
               <div className="sidebar__body">
-                {activity === "search" ? <SearchPanel /> : <FileTree />}
+                {activity === "search" ? (
+                  <SearchPanel />
+                ) : activity === "git" ? (
+                  <GitPanel />
+                ) : (
+                  <FileTree />
+                )}
               </div>
             </aside>
             <Resizer direction="vertical" onResize={onSidebarResize} />
@@ -251,6 +274,18 @@ export function AppLayout() {
       </div>
       <StatusBar />
       <DiffModal />
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        onToggleSidebar={() => setSidebarOpen((v) => !v)}
+        onToggleTerminal={() => setTermOpen((v) => !v)}
+        onToggleChat={() => setChatOpen((v) => !v)}
+        onOpenChat={() => setChatOpen(true)}
+        onShowActivity={(id) => {
+          setActivity(id);
+          setSidebarOpen(true);
+        }}
+      />
     </div>
   );
 }

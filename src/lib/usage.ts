@@ -9,8 +9,8 @@
 
 export type UsagePlanId = "free" | "pro";
 
-export const WINDOW_5H_MS = 5 * 60 * 60 * 1000;
-export const WINDOW_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+const WINDOW_5H_MS = 5 * 60 * 60 * 1000;
+const WINDOW_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** Soft cost charged per tool call (in estimated tokens) */
 export const TOOL_TOKEN_COST = 400;

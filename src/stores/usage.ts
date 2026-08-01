@@ -23,7 +23,7 @@ import {
 } from "../lib/supabase-billing";
 
 /** `src/lib/usage.ts` is process-shared and stays language-free; the store localizes. */
-export function denialMessage(code: UsageDenialCode | undefined): string {
+function denialMessage(code: UsageDenialCode | undefined): string {
   return code === "week_exhausted"
     ? i18n.t("settings.limitWeekExhausted")
     : i18n.t("settings.limitH5Exhausted");
