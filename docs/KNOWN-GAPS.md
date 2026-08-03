@@ -107,8 +107,11 @@ The model-provider key is delivered from Supabase after sign-in
 decrypt in main, memory only). Honest caveat: the decryption key ships inside
 the app (`electron/services/provider-key.ts`), so this is defence in depth
 against casual extraction, not true secrecy — that would need a server-side
-proxy for all model traffic. `BEIDE_ECHOGATE_API_KEY` in `.env` remains a dev
-override. Publish/rotate the cloud key with `npm run supabase:secrets`.
+proxy for all model traffic. That proxy is now the ONLY route: agent traffic
+goes through the Supabase Edge Function (`MODEL_PROXY_BASE_URL` in agent.ts)
+authenticated by the account JWT, and the local `BEIDE_ECHOGATE_API_KEY`
+override was removed. Publish/rotate the server-side key with
+`npm run supabase:secrets`.
 
 Chat sessions now have a cloud write-through backup: after every local
 `session:save`, the renderer also upserts the transcript to

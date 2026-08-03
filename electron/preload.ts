@@ -55,6 +55,7 @@ const api: BeideApi = {
     getStatus: () => invoke("agent:getStatus"),
     getProviders: () => invoke("agent:getProviders"),
     setAccessToken: (token: string) => invoke("agent:setAccessToken", token),
+    setPlan: (plan: "free" | "pro") => invoke("agent:setPlan", plan),
     health: () => invoke("agent:health"),
   },
   checkpoint: {

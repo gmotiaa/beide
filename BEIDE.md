@@ -56,7 +56,10 @@ the short policy the agent must not regress.
 - macOS/Linux polish
 - Expanding dependencies without noting why
 
-(Supabase accounts exist but are optional — the app must keep working signed out.)
+(The beide Cloud account is mandatory: AuthGate blocks the shell signed out,
+models are served only through the account-gated model proxy, and Pro-tier
+models require the Pro plan. There is no local bring-your-own-key mode — do
+not reintroduce one. The codebase is proprietary, not MIT.)
 
 ## Verify before done
 

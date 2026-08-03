@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { BrowserWindow } from "electron";
-import { stripSecretEnv } from "./agent";
+import { stripSecretEnv } from "./shell";
 
 const MAX_TERMINALS = 8;
 const MAX_WRITE_CHARS = 8192;

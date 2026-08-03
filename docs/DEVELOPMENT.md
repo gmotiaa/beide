@@ -143,8 +143,10 @@ documented by `.env.example`) only carries overrides and operator secrets:
   (e.g. local `supabase start`)
 * `SUPABASE_SERVICE_ROLE_KEY` — scripts/main process only, or
   `%APPDATA%/beide/.beide-admin.env`
-* `BEIDE_ECHOGATE_API_KEY` — dev override for the provider key (production
-  gets it from Supabase after sign-in; publish with `npm run supabase:secrets`)
+* Provider keys: none. Models are cloud-only — the app authenticates the
+  model proxy with the account JWT; `BEIDE_ECHOGATE_API_KEY` was removed from
+  the env allowlist on purpose (publish the server-side key with
+  `npm run supabase:secrets`)
 
 ## Conventions
 

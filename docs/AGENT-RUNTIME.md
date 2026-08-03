@@ -93,17 +93,17 @@ Every entry carries a `vendor` (openai/anthropic/google/xai/zhipu/moonshot);
 the picker groups by it in `VENDOR_ORDER`, and display names carry no gateway
 branding (the settings screen shows the provider as "beide Cloud").
 
-The only provider is `echogate` through its OpenAI-compatible
-`https://api.echogate.one/v1` endpoint. The key normally arrives from
-Supabase after sign-in: the renderer calls the
-`get_encrypted_model_api_key()` RPC (authenticated only) and hands the
-AES-256-GCM ciphertext to main over `agent:installProviderKey`;
-`electron/services/provider-key.ts` decrypts it in memory. Publish or rotate
-it with `npm run supabase:secrets`. `BEIDE_ECHOGATE_API_KEY` in local `.env`
-is a dev override that wins over the cloud key. Provider status comes from
+The only provider is `echogate`, reached exclusively through the beide Cloud
+model proxy (`MODEL_PROXY_BASE_URL` in `agent.ts` — a Supabase Edge Function
+speaking the OpenAI-compatible protocol). The credential is the account's
+Supabase JWT: the renderer pushes it over `agent:setAccessToken` on every auth
+change, main sends it as the bearer token, and the raw gateway key exists only
+server-side (publish/rotate with `npm run supabase:secrets`). There is no
+local `.env` override — the signed-in account is the only credential path,
+and Pro-tier models (`tier: "pro"` in the catalog) additionally require the
+Pro plan, pushed over `agent:setPlan`. Provider status comes from
 `ModelRuntime.getProviderAuthStatus()` and exposes only `{ connected, kind }`;
-the key is installed as an in-memory runtime override and never reaches a
-child shell.
+the token is an in-memory runtime override and never reaches a child shell.
 
 The catalog mirrors the gateway's full `/v1/models` (33 entries across
 OpenAI/Anthropic/Google/xAI/DeepSeek/Alibaba/Moonshot/Zhipu/MiniMax), with

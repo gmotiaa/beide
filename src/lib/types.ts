@@ -136,6 +136,8 @@ export interface BeideApi {
     getStatus: () => Promise<{ ready: boolean; streaming: boolean; mode: AgentMode; model?: string }>;
     getProviders: () => Promise<ProviderStatus[]>;
     setAccessToken: (token: string) => Promise<{ ok: boolean }>;
+    /** Billing plan of the signed-in account — gates Pro-tier models in main. */
+    setPlan: (plan: "free" | "pro") => Promise<{ ok: boolean }>;
     health: () => Promise<{ ok: boolean; latencyMs: number | null }>;
   };
   ai: {

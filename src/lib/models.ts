@@ -47,6 +47,12 @@ export interface BeideModel {
   maxTokens: number;
   /** Listed by the gateway but currently erroring — greyed out in the picker. */
   disabled?: boolean;
+  /**
+   * Subscription tier the beide Cloud account needs to run the model.
+   * Absent = available on Free. Enforced in the picker, in AgentService and
+   * (authoritatively) by the model-proxy Edge Function.
+   */
+  tier?: "pro";
 }
 
 /** OpenAI-compatible endpoint documented by the gateway. */
@@ -64,25 +70,25 @@ const out = (reported: number) => Math.min(reported, MAX_OUTPUT_CAP);
 // but which currently error on completion (verified by hand — re-check before
 // flipping them back on).
 export const MODEL_CATALOG: BeideModel[] = [
-  { id: "gpt-5.6-sol", name: "GPT", version: "5.6 Sol", vendor: "openai", supportsImages: true, contextWindow: 1_050_000, maxTokens: out(128_000), ...P },
+  { id: "gpt-5.6-sol", name: "GPT", version: "5.6 Sol", vendor: "openai", supportsImages: true, contextWindow: 1_050_000, maxTokens: out(128_000), tier: "pro", ...P },
   { id: "gpt-5.6-terra", name: "GPT", version: "5.6 Terra", vendor: "openai", supportsImages: true, contextWindow: 1_050_000, maxTokens: out(128_000), ...P },
   { id: "gpt-5.6-luna", name: "GPT", version: "5.6 Luna", vendor: "openai", supportsImages: true, contextWindow: 1_050_000, maxTokens: out(128_000), ...P },
-  { id: "gpt-5.5-pro", name: "GPT", version: "5.5 Pro", vendor: "openai", supportsImages: false, contextWindow: 1_050_000, maxTokens: out(128_000), ...P },
-  { id: "gpt-5.5", name: "GPT", version: "5.5", vendor: "openai", supportsImages: true, contextWindow: 1_050_000, maxTokens: out(128_000), ...P },
-  { id: "claude-fable-5", name: "Claude Fable", version: "5", vendor: "anthropic", supportsImages: true, contextWindow: 1_000_000, maxTokens: out(128_000), ...P },
-  { id: "claude-opus-5", name: "Claude Opus", version: "5", vendor: "anthropic", supportsImages: true, contextWindow: 1_000_000, maxTokens: out(128_000), disabled: true, ...P },
+  { id: "gpt-5.5-pro", name: "GPT", version: "5.5 Pro", vendor: "openai", supportsImages: false, contextWindow: 1_050_000, maxTokens: out(128_000), tier: "pro", ...P },
+  { id: "gpt-5.5", name: "GPT", version: "5.5", vendor: "openai", supportsImages: true, contextWindow: 1_050_000, maxTokens: out(128_000), tier: "pro", ...P },
+  { id: "claude-fable-5", name: "Claude Fable", version: "5", vendor: "anthropic", supportsImages: true, contextWindow: 1_000_000, maxTokens: out(128_000), tier: "pro", ...P },
+  { id: "claude-opus-5", name: "Claude Opus", version: "5", vendor: "anthropic", supportsImages: true, contextWindow: 1_000_000, maxTokens: out(128_000), disabled: true, tier: "pro", ...P },
   { id: "claude-sonnet-5", name: "Claude Sonnet", version: "5", vendor: "anthropic", supportsImages: true, contextWindow: 1_000_000, maxTokens: out(128_000), ...P },
-  { id: "claude-opus-4-8", name: "Claude Opus", version: "4.8", vendor: "anthropic", supportsImages: true, contextWindow: 1_000_000, maxTokens: out(128_000), ...P },
-  { id: "claude-opus-4-7", name: "Claude Opus", version: "4.7", vendor: "anthropic", supportsImages: true, contextWindow: 1_000_000, maxTokens: out(128_000), ...P },
-  { id: "claude-opus-4-6", name: "Claude Opus", version: "4.6", vendor: "anthropic", supportsImages: true, contextWindow: 1_000_000, maxTokens: out(128_000), ...P },
-  { id: "claude-sonnet-4-6", name: "Claude Sonnet", version: "4.6", vendor: "anthropic", supportsImages: true, contextWindow: 1_000_000, maxTokens: out(64_000), ...P },
+  { id: "claude-opus-4-8", name: "Claude Opus", version: "4.8", vendor: "anthropic", supportsImages: true, contextWindow: 1_000_000, maxTokens: out(128_000), tier: "pro", ...P },
+  { id: "claude-opus-4-7", name: "Claude Opus", version: "4.7", vendor: "anthropic", supportsImages: true, contextWindow: 1_000_000, maxTokens: out(128_000), tier: "pro", ...P },
+  { id: "claude-opus-4-6", name: "Claude Opus", version: "4.6", vendor: "anthropic", supportsImages: true, contextWindow: 1_000_000, maxTokens: out(128_000), tier: "pro", ...P },
+  { id: "claude-sonnet-4-6", name: "Claude Sonnet", version: "4.6", vendor: "anthropic", supportsImages: true, contextWindow: 1_000_000, maxTokens: out(64_000), tier: "pro", ...P },
   { id: "gemini-3.6-flash", name: "Gemini", version: "3.6 Flash", vendor: "google", supportsImages: true, contextWindow: 1_048_576, maxTokens: out(65_536), ...P },
   { id: "gemini-3.5-flash", name: "Gemini", version: "3.5 Flash", vendor: "google", supportsImages: true, contextWindow: 1_048_576, maxTokens: out(65_536), ...P },
-  { id: "gemini-3.1-pro-preview", name: "Gemini", version: "3.1 Pro Preview", vendor: "google", supportsImages: true, contextWindow: 1_048_576, maxTokens: out(65_536), ...P },
+  { id: "gemini-3.1-pro-preview", name: "Gemini", version: "3.1 Pro Preview", vendor: "google", supportsImages: true, contextWindow: 1_048_576, maxTokens: out(65_536), tier: "pro", ...P },
   { id: "gemini-3.1-flash-lite", name: "Gemini", version: "3.1 Flash Lite", vendor: "google", supportsImages: true, contextWindow: 1_048_576, maxTokens: out(65_536), ...P },
-  { id: "gemini-2.5-pro", name: "Gemini", version: "2.5 Pro", vendor: "google", supportsImages: true, contextWindow: 1_050_000, maxTokens: out(65_500), ...P },
-  { id: "gemini-2.5-flash", name: "Gemini", version: "2.5 Flash", vendor: "google", supportsImages: true, contextWindow: 1_050_000, maxTokens: out(65_500), ...P },
-  { id: "grok-4.5", name: "Grok", version: "4.5", vendor: "xai", supportsImages: false, contextWindow: 500_000, maxTokens: out(500_000), ...P },
+  { id: "gemini-2.5-pro", name: "Gemini", version: "2.5 Pro", vendor: "google", supportsImages: true, contextWindow: 1_050_000, maxTokens: out(65_500), tier: "pro", ...P },
+  { id: "gemini-2.5-flash", name: "Gemini", version: "2.5 Flash", vendor: "google", supportsImages: true, contextWindow: 1_050_000, maxTokens: out(65_500), tier: "pro", ...P },
+  { id: "grok-4.5", name: "Grok", version: "4.5", vendor: "xai", supportsImages: false, contextWindow: 500_000, maxTokens: out(500_000), tier: "pro", ...P },
   { id: "grok-build-0.1", name: "Grok", version: "Build 0.1", vendor: "xai", supportsImages: false, contextWindow: 256_000, maxTokens: out(256_000), ...P },
   { id: "deepseek-v4-pro", name: "DeepSeek", version: "V4 Pro", vendor: "deepseek", supportsImages: false, contextWindow: 1_000_000, maxTokens: out(384_000), ...P },
   { id: "deepseek-v4-flash", name: "DeepSeek", version: "V4 Flash", vendor: "deepseek", supportsImages: false, contextWindow: 1_000_000, maxTokens: out(384_000), ...P },
@@ -108,13 +114,19 @@ export function findModel(id: string): BeideModel | undefined {
   return BY_ID.get(trimmed) ?? BY_ID.get(trimmed.replace(/^echogate\//, ""));
 }
 
+/** True when running the model needs the Pro subscription. */
+export function isProModel(id: string): boolean {
+  return findModel(id)?.tier === "pro";
+}
+
 /** Display list for the model picker. */
 export const MODEL_OPTIONS: Array<
-  Pick<BeideModel, "id" | "name" | "version" | "vendor" | "disabled">
-> = MODEL_CATALOG.map(({ id, name, version, vendor, disabled }) => ({
+  Pick<BeideModel, "id" | "name" | "version" | "vendor" | "disabled" | "tier">
+> = MODEL_CATALOG.map(({ id, name, version, vendor, disabled, tier }) => ({
   id,
   name,
   version,
   vendor,
   disabled,
+  tier,
 }));

@@ -60,7 +60,8 @@ interface AgentState {
   dispose: () => void;
   setMode: (mode: AgentMode) => Promise<void>;
   setModel: (model: string) => void;
-  send: (text?: string) => Promise<void>;
+  /** Resolves false when the prompt was NOT dispatched (gate/setup refusal) — callers may restore the draft. */
+  send: (text?: string) => Promise<boolean>;
   abort: () => Promise<void>;
   respondPermission: (allow: boolean, content?: string) => Promise<void>;
   handleEvent: (raw: unknown) => void;
@@ -196,6 +197,14 @@ function previousToolArgs(toolCallId?: string): Record<string, unknown> {
   return m?.toolArgs ?? {};
 }
 
+/**
+ * Provider-reported cost of the last finished assistant step. Used as the
+ * headroom estimate for the next tool gate — the flat 400-token placeholder
+ * under-estimated real agentic steps (full history + tool payloads) by an
+ * order of magnitude. Module-local: it is a heuristic, not persisted state.
+ */
+let lastStepTokens = 0;
+
 export const useAgentStore = create<AgentState>((set, get) => ({
   mode: "agent",
   streaming: false,
@@ -317,7 +326,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
     const images = [...chat.images];
     const mentions = [...chat.mentions];
 
-    if (!content && images.length === 0) return;
+    if (!content && images.length === 0) return false;
 
     // Sending while a turn streams is allowed: main serializes prompts and pi
     // treats them as follow-ups ("followUp" streaming behavior), so the message
@@ -326,20 +335,20 @@ export const useAgentStore = create<AgentState>((set, get) => ({
     const api = getBeide();
     if (!api) {
       chat.setError(i18n.t("chat.sendFailed"));
-      return;
+      return false;
     }
 
     if (!get().ready) await get().refreshStatus();
     if (!get().ready) {
       chat.setError(i18n.t("chat.openProjectFirst"));
-      return;
+      return false;
     }
 
     if (!get().providersLoaded) await get().refreshProviders();
 
     if (get().providersLoaded && !get().providers.some((provider) => provider.connected)) {
       chat.setError(i18n.t("chat.noProviderConfigured"));
-      return;
+      return false;
     }
 
     // Token charge: Supabase when signed in, else local (Electron/userData)
@@ -349,11 +358,11 @@ export const useAgentStore = create<AgentState>((set, get) => ({
       gate = await usage.recordPrompt(content || "(image)");
     } catch {
       chat.setError(i18n.t("settings.meteringUnavailable"));
-      return;
+      return false;
     }
     if (!gate.ok) {
       chat.setError(gate.reason ?? i18n.t("settings.chatLimitError"));
-      return;
+      return false;
     }
 
     // "@codebase <query>" anywhere in the message becomes a codebase mention;
@@ -408,6 +417,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
       set({ streaming: false });
       void usage.load();
     }
+    return true;
   },
 
   abort: async () => {
@@ -615,7 +625,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
       // of silently running (and charging) an unbounded tool loop.
       void useUsageStore
         .getState()
-        .recordTools(1)
+        .recordTools(1, lastStepTokens)
         .then((gate) => {
           if (!gate.ok) {
             useChatStore.getState().setError(gate.reason ?? "");
@@ -673,7 +683,21 @@ export const useAgentStore = create<AgentState>((set, get) => ({
     if (type === "beide_usage" || type === "beide:usage") {
       const tokens = Number(r.tokens);
       if (Number.isFinite(tokens) && tokens > 0) {
-        void useUsageStore.getState().spendActual(tokens);
+        lastStepTokens = tokens;
+        // The server ledger is the authority: when spend_tokens refuses the
+        // charge (windows AND credits exhausted), the turn must stop — a
+        // banner alone let multi-step runs keep burning tokens past the limit.
+        void useUsageStore
+          .getState()
+          .spendActual(tokens)
+          .then((res) => {
+            if (!res.ok && get().streaming) {
+              useChatStore
+                .getState()
+                .setError(res.reason ?? i18n.t("settings.chatLimitError"));
+              void get().abort();
+            }
+          });
       }
       return;
     }

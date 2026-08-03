@@ -3,8 +3,10 @@ name: Release
 # Tag a version to ship it:
 #   npm version patch   (bumps package.json + creates the vX.Y.Z tag)
 #   git push origin main --tags
-# electron-builder uploads the installers + latest.yml to a GitHub Release;
+# Each OS job builds its own installers and electron-builder uploads them
+# (plus latest.yml / latest-mac.yml) to the same GitHub Release;
 # electron-updater in the packaged app picks updates up from there.
+# macOS artifacts can only be built on a macOS host — hence the matrix.
 
 on:
   push:
@@ -12,7 +14,15 @@ on:
 
 jobs:
   release:
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            args: --win
+          - os: macos-latest
+            args: --mac
+    runs-on: ${{ matrix.os }}
     permissions:
       contents: write
     steps:
@@ -23,8 +33,10 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
-      - run: npm test
+      # The test harness drives cmd.exe-flavoured shells — Windows job only.
+      - if: runner.os == 'Windows'
+        run: npm test
       - run: npx electron-vite build
-      - run: npx electron-builder --win --publish always
+      - run: npx electron-builder ${{ matrix.args }} --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

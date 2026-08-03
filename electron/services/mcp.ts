@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { stripSecretEnv } from "./agent";
+import { stripSecretEnv } from "./shell";
 
 /**
  * Hand-rolled MCP (Model Context Protocol) client — stdio transport only.

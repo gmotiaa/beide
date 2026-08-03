@@ -1,7 +1,12 @@
 import { access, mkdir, open, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { spawn } from "node:child_process";
 import type { BrowserWindow } from "electron";
+import {
+  SECRET_FILE_RE,
+  maskSecretValues,
+  runShellCommand,
+  stripSecretEnv,
+} from "./shell";
 import { Type } from "typebox";
 import { Agent as UndiciAgent, setGlobalDispatcher } from "undici";
 import {
@@ -42,9 +47,9 @@ import type {
 } from "../../src/lib/types";
 import {
   DEFAULT_MODEL_ID,
-  ECHOGATE_BASE_URL,
   MODEL_CATALOG,
   findModel,
+  isProModel,
 } from "../../src/lib/models";
 import type { CheckpointService } from "./checkpoints";
 import type { PermissionGateway } from "./permissions";
@@ -62,21 +67,19 @@ import { McpManager } from "./mcp";
 const PREFERRED_MODEL = DEFAULT_MODEL_ID;
 
 /**
- * API keys MUST be read lazily at call time, not at module load.
- * In ESM, all imports are evaluated before the importing module's body runs,
- * so main.ts's loadEnvFile() hasn't executed yet when this module loads.
- * Capturing process.env at top level would always yield "".
+ * Hard ceiling of assistant steps per turn. The pi loop itself is unbounded
+ * (`while (true)` until the model stops calling tools), and each step resends
+ * the full history — a stuck loop can burn a weekly token window unattended.
  */
-function echogateEnvKey(): string {
-  return process.env.BEIDE_ECHOGATE_API_KEY ?? "";
-}
+const MAX_RUN_STEPS = 60;
 
 /**
- * Default model route: the Supabase Edge Function proxy. The gateway key
- * lives ONLY server-side (app_config, service role); clients authenticate
- * with their Supabase JWT and the function pre-checks usage limits. The
- * project URL matches src/lib/supabase.ts (baked-in public project).
- * A BEIDE_ECHOGATE_API_KEY in .env switches to the direct gateway (dev).
+ * The ONLY model route: the Supabase Edge Function proxy. The gateway key
+ * lives exclusively server-side (app_config, service role); clients
+ * authenticate with their Supabase JWT and the function pre-checks usage
+ * limits and the account's plan. There is deliberately no local-key bypass —
+ * without a signed-in beide Cloud account the agent has no provider at all.
+ * The project URL matches src/lib/supabase.ts (baked-in public project).
  */
 const MODEL_PROXY_BASE_URL =
   "https://opihhvfcykzdkqvpsqby.supabase.co/functions/v1/model-proxy/v1";
@@ -109,7 +112,7 @@ function transcriptToAgentMessages(
 ): PiAgentMessage[] {
   const selected: ChatMessage[] = [];
   let chars = 0;
-  for (let index = history.length - 1; index >= 0 && selected.length < 120; index--) {
+  for (let index = history.length - 1; index >= 0 && selected.length < 80; index--) {
     const message = history[index]!;
     if (
       (message.role !== "user" && message.role !== "assistant") ||
@@ -117,7 +120,7 @@ function transcriptToAgentMessages(
     ) {
       continue;
     }
-    if (chars + message.content.length > 200_000 && selected.length > 0) break;
+    if (chars + message.content.length > 120_000 && selected.length > 0) break;
     selected.push(message);
     chars += message.content.length;
   }
@@ -162,7 +165,7 @@ const ECHOGATE_MODELS: Record<string, Record<string, unknown>> = Object.fromEntr
       name: `${m.name} ${m.version}`,
       api: "openai-completions" as const,
       provider: "echogate" as const,
-      baseUrl: ECHOGATE_BASE_URL,
+      baseUrl: MODEL_PROXY_BASE_URL,
       reasoning: false,
       input: (m.supportsImages ? ["text", "image"] : ["text"]) as Array<
         "text" | "image"
@@ -341,7 +344,7 @@ async function buildQuickWorkspaceMap(
 }
 
 /** Shallow file tree for system context so the agent knows the project layout. */
-async function buildWorkspaceTreeSnapshot(cwd: string, maxEntries = 250): Promise<string> {
+async function buildWorkspaceTreeSnapshot(cwd: string, maxEntries = 160): Promise<string> {
   const { readdir } = await import("node:fs/promises");
   const skip = new Set([
     "node_modules",
@@ -495,6 +498,8 @@ export class AgentService {
   private registeredEchogateAuth: string | null = null;
   /** Supabase access token pushed by the renderer; authenticates the model proxy. */
   private supabaseAccessToken: string | null = null;
+  /** Billing plan of the signed-in account; Pro-tier models are refused on "free". */
+  private accountPlan: "free" | "pro" = "free";
   private modelSupportsImages = false;
   private initPromise: Promise<void> | null = null;
   private runtimePromise: Promise<ModelRuntime> | null = null;
@@ -636,9 +641,23 @@ export class AgentService {
     return this.promptChain as Promise<void>;
   }
 
+  /** Renderer pushes the account plan alongside the access token. */
+  setPlan(plan: "free" | "pro"): void {
+    this.accountPlan = plan;
+  }
+
   private async setModelImpl(modelId: string): Promise<void> {
     const id = modelId.trim();
     if (!id) return;
+    // Defense-in-depth behind the picker's own gating: a Pro-tier model on a
+    // Free account is refused up front instead of failing at the proxy later.
+    if (isProModel(id) && this.accountPlan !== "pro") {
+      this.emit({
+        type: "beide:warning",
+        message: `Модель ${id} доступна только на подписке Pro — план аккаунта остаётся ${this.accountPlan}.`,
+      });
+      return;
+    }
     this.selectedModelId = id;
     this.modelLabel = id;
     if (this.workspaceRoot) {
@@ -673,6 +692,9 @@ export class AgentService {
     if (userText.length > 200_000) {
       return { ok: false, error: "Prompt too large (max 200k characters)" };
     }
+
+    // A fresh turn re-arms the runaway fuse.
+    this.runSteps = 0;
 
     // Usage is charged in the renderer (Supabase when signed in, else local).
     // Main only enforces workspace + session safety.
@@ -820,6 +842,46 @@ export class AgentService {
   // ── internals ──────────────────────────────────────────────
 
   /**
+   * Tokens metered while no live window existed (closed / reloading renderer).
+   * Charging happens in the renderer, so usage emitted into the void was lost
+   * from the ledger forever — buffer it and flush on the next live window.
+   */
+  private pendingUsageTokens = 0;
+
+  /** Assistant steps in the current turn — a runaway-loop fuse (see prompt loop). */
+  private runSteps = 0;
+
+  private emitUsage(tokens: number): void {
+    const win = this.mainWindow;
+    if (!win || win.isDestroyed()) {
+      this.pendingUsageTokens += tokens;
+      return;
+    }
+    if (this.pendingUsageTokens > 0) {
+      const backlog = this.pendingUsageTokens;
+      this.pendingUsageTokens = 0;
+      this.emit({ type: "beide:usage", tokens: backlog });
+    }
+    this.emit({ type: "beide:usage", tokens });
+  }
+
+  /**
+   * The pi loop has no step ceiling (`while (true)` until the model stops
+   * calling tools). Combined with full-history resends this is exactly how a
+   * runaway turn eats a weekly window. Hard fuse: abort past MAX_RUN_STEPS.
+   */
+  private countRunStep(): void {
+    this.runSteps += 1;
+    if (this.runSteps === MAX_RUN_STEPS) {
+      this.emit({
+        type: "beide:warning",
+        message: `Прогон остановлен предохранителем после ${MAX_RUN_STEPS} шагов — продолжите новым сообщением, если нужно.`,
+      });
+      void this.abort();
+    }
+  }
+
+  /**
    * The window can be gone while the agent is still streaming (user closed it
    * mid-turn). `webContents.send` on a destroyed window throws, so every
    * outbound event goes through here.
@@ -924,17 +986,16 @@ export class AgentService {
   }
 
   /**
-   * .env key → talk to the gateway directly (dev). Otherwise the Supabase
-   * access token authenticates the model-proxy Edge Function — the raw
-   * provider key never exists in this process at all.
+   * Cloud-only: the Supabase access token of the signed-in account is the one
+   * and only credential. The raw provider key never exists in this process.
    */
   private effectiveEchogateKey(): string {
-    return echogateEnvKey().trim() || this.supabaseAccessToken || "";
+    return this.supabaseAccessToken ?? "";
   }
 
-  /** Where the OpenAI-compatible requests go, matching the credential above. */
+  /** Every OpenAI-compatible request goes through the account-gated proxy. */
   private effectiveBaseUrl(): string {
-    return echogateEnvKey().trim() ? ECHOGATE_BASE_URL : MODEL_PROXY_BASE_URL;
+    return MODEL_PROXY_BASE_URL;
   }
 
   /**
@@ -971,7 +1032,10 @@ export class AgentService {
   }): Promise<{ ok: boolean; text?: string; error?: string }> {
     const key = this.effectiveEchogateKey();
     if (!key) return { ok: false, error: "Provider key not available yet" };
-    const model = findModel(opts.model ?? "")?.id ?? "gemini-3.6-flash";
+    const requested = findModel(opts.model ?? "")?.id ?? "gemini-3.6-flash";
+    // One-shot completions obey the same plan gate as chat prompts.
+    const model =
+      isProModel(requested) && this.accountPlan !== "pro" ? DEFAULT_MODEL_ID : requested;
     const messages: Array<{ role: string; content: string }> = [];
     if (opts.system) messages.push({ role: "system", content: opts.system });
     messages.push({ role: "user", content: opts.prompt });
@@ -996,7 +1060,18 @@ export class AgentService {
       }
       const json = (await res.json()) as {
         choices?: Array<{ message?: { content?: string } }>;
+        usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
       };
+      // One-shot completions (ghost text, inline edit, commit msg, AI review)
+      // used to fly entirely past the ledger — meter them like agent steps.
+      const usage = json.usage;
+      const total =
+        typeof usage?.total_tokens === "number" && usage.total_tokens > 0
+          ? usage.total_tokens
+          : (Number(usage?.prompt_tokens) || 0) + (Number(usage?.completion_tokens) || 0);
+      if (total > 0) {
+        this.emitUsage(Math.round(total));
+      }
       const text = json.choices?.[0]?.message?.content;
       if (typeof text !== "string" || !text) {
         return { ok: false, error: "Gateway returned no content" };
@@ -1007,14 +1082,17 @@ export class AgentService {
     }
   }
 
-  /** Cheap reachability probe for the status-bar health badge. */
+  /** Cheap reachability probe of beide Cloud for the status-bar health badge. */
   async probeGateway(): Promise<{ ok: boolean; latencyMs: number | null }> {
     const started = Date.now();
     try {
-      const res = await fetch(ECHOGATE_BASE_URL.replace(/\/v1\/?$/, "/"), {
+      const res = await fetch(MODEL_PROXY_BASE_URL.replace(/\/v1\/?$/, "/"), {
         signal: AbortSignal.timeout(6_000),
       });
-      return { ok: res.ok, latencyMs: Date.now() - started };
+      // An unauthenticated GET legitimately answers 401/404 here — any
+      // response below 5xx proves the cloud endpoint is reachable, which is
+      // exactly what the badge reports.
+      return { ok: res.status < 500, latencyMs: Date.now() - started };
     } catch {
       return { ok: false, latencyMs: null };
     }
@@ -1143,7 +1221,7 @@ export class AgentService {
     const providers = this.providerStatuses(modelRuntime);
     if (!providers.some((provider) => provider.connected)) {
       console.error(
-        "[agent] no provider credentials — cloud key not delivered yet (sign in) and no BEIDE_ECHOGATE_API_KEY dev override",
+        "[agent] no provider credentials — beide Cloud requires a signed-in account (no local-key path exists)",
       );
       this.emit({
         type: "beide:warning",
@@ -1161,8 +1239,12 @@ export class AgentService {
     );
     const requestedEntry = findModel(requestedModelId);
     const connectedFallback = MODEL_CATALOG.find((entry) => connected.has(entry.provider));
-    const effectiveModelId =
-      requestedEntry && !connected.has(requestedEntry.provider) && connectedFallback
+    // Plan gate first: a Free account never sends a Pro-tier model id to the
+    // proxy, it snaps to the default (free-tier) model with a spoken warning.
+    const proBlocked = requestedEntry?.tier === "pro" && this.accountPlan !== "pro";
+    const effectiveModelId = proBlocked
+      ? PREFERRED_MODEL
+      : requestedEntry && !connected.has(requestedEntry.provider) && connectedFallback
         ? connectedFallback.id
         : requestedModelId;
     let model = await this.resolveModel(modelRuntime, effectiveModelId);
@@ -1170,7 +1252,9 @@ export class AgentService {
     if (effectiveModelId !== requestedModelId && model) {
       this.emit({
         type: "beide:warning",
-        message: `Провайдер модели ${requestedModelId} не подключён — работаю на ${model.id}.`,
+        message: proBlocked
+          ? `Модель ${requestedModelId} доступна только на подписке Pro — работаю на ${model.id}.`
+          : `Провайдер модели ${requestedModelId} не подключён — работаю на ${model.id}.`,
       });
     }
 
@@ -1342,8 +1426,9 @@ export class AgentService {
                 ? u.totalTokens
                 : (Number(u.input) || 0) + (Number(u.output) || 0);
             if (total > 0) {
-              this.emit({ type: "beide:usage", tokens: Math.round(total) });
+              this.emitUsage(Math.round(total));
             }
+            this.countRunStep();
           }
         }
       }
@@ -1859,164 +1944,4 @@ export class AgentService {
     this.mcp.stopAll();
     this.modelRuntime = null;
   }
-}
-
-/**
- * The main process env carries provider credentials (loaded from .env). A child
- * shell the model can drive must not be able to echo them back, so anything
- * that looks like a credential is stripped before spawn.
- */
-const SECRET_ENV_KEYS = new Set([
-  "BEIDE_ECHOGATE_API_KEY",
-  "BEIDE_ADMIN_EMAIL",
-  "BEIDE_ADMIN_PASSWORD",
-  "SUPABASE_SERVICE_ROLE_KEY",
-]);
-const SECRET_ENV_RE = /_API_KEY$|_KEY$|TOKEN|SECRET|PASSWORD|PASSWD/i;
-
-/** Files whose contents are masked before they reach the model. */
-const SECRET_FILE_RE =
-  /(^|[\\/])\.env(\.[^\\/]*)?$|\.pem$|(^|[\\/])[^\\/]*(secrets?|credentials)[^\\/]*\.(json|ya?ml|toml|env|txt)$/i;
-
-/** `KEY=value` / `"key": "value"`-style values become ***; key names survive. */
-function maskSecretValues(text: string): string {
-  return text
-    .replace(/^(\s*(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*\s*=\s*).+$/gm, "$1***")
-    .replace(/("[^"]*(?:key|token|secret|password)[^"]*"\s*:\s*)"[^"]*"/gi, '$1"***"');
-}
-
-/** Shared with the PTY terminal — any user-visible shell gets the same env hygiene. */
-export function stripSecretEnv(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...source };
-  for (const key of Object.keys(env)) {
-    if (SECRET_ENV_KEYS.has(key) || SECRET_ENV_RE.test(key)) delete env[key];
-  }
-  return env;
-}
-
-function buildChildEnv(): NodeJS.ProcessEnv {
-  return stripSecretEnv({
-    ...process.env,
-    PYTHONIOENCODING: "utf-8",
-    PYTHONUTF8: "1",
-  });
-}
-
-/**
- * Simple shell runner for terminal MVP (no node-pty).
- * Runs in workspace cwd with a 30s timeout.
- */
-export function runShellCommand(
-  command: string,
-  cwd: string | null,
-  timeoutMs = 30_000,
-): Promise<{ code: number; stdout: string; stderr: string }> {
-  return new Promise((resolve) => {
-    if (!cwd) {
-      resolve({ code: 1, stdout: "", stderr: "No workspace open — open a folder first" });
-      return;
-    }
-
-    const isWin = process.platform === "win32";
-    // Force UTF-8 on Windows so Cyrillic paths/output don't garble
-    const wrapped = isWin ? `chcp 65001>nul & ${command}` : command;
-    const child = spawn(
-      isWin ? "cmd.exe" : "/bin/sh",
-      isWin ? ["/d", "/s", "/c", wrapped] : ["-c", wrapped],
-      {
-        cwd,
-        env: buildChildEnv(),
-        windowsHide: true,
-        // POSIX killTree signals -pid, which only reaches the tree when the
-        // child leads its own process group.
-        detached: !isWin,
-      },
-    );
-
-    let stdout = "";
-    let stderr = "";
-    let stdoutTruncated = false;
-    let stderrTruncated = false;
-    const MAX = 1_000_000;
-    let settled = false;
-    let timedOut = false;
-
-    const finish = (code: number) => {
-      if (settled) return;
-      settled = true;
-      // The kill usually makes 'close' fire before killTree() resolves, so the
-      // timeout has to be reported from the flag, not from the losing branch.
-      if (timedOut) {
-        stderr += `\n[beide] command timed out after ${Math.round(timeoutMs / 1000)}s`;
-      }
-      if (stdoutTruncated) stdout += `\n[beide] stdout truncated to last 1MB`;
-      if (stderrTruncated) stderr += `\n[beide] stderr truncated to last 1MB`;
-      resolve({ code: timedOut ? 124 : code, stdout, stderr });
-    };
-
-    const killTree = (): Promise<void> => {
-      return new Promise((res) => {
-        try {
-          if (!child.pid) return res();
-          if (process.platform === "win32") {
-            // taskkill /T kills the whole process tree rooted at child.pid
-            const killer = spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
-              windowsHide: true,
-            });
-            killer.on("close", () => res());
-            killer.on("error", () => {
-              try {
-                child.kill();
-              } catch {
-                /* ignore */
-              }
-              res();
-            });
-          } else {
-            try {
-              process.kill(-child.pid, "SIGKILL");
-            } catch {
-              try {
-                child.kill("SIGKILL");
-              } catch {
-                /* ignore */
-              }
-            }
-            res();
-          }
-        } catch {
-          res();
-        }
-      });
-    };
-
-    const timer = setTimeout(() => {
-      timedOut = true;
-      void killTree().then(() => finish(124));
-    }, timeoutMs);
-
-    child.stdout?.on("data", (d: Buffer) => {
-      stdout += d.toString("utf8");
-      if (stdout.length > MAX) {
-        stdout = stdout.slice(-MAX);
-        stdoutTruncated = true;
-      }
-    });
-    child.stderr?.on("data", (d: Buffer) => {
-      stderr += d.toString("utf8");
-      if (stderr.length > MAX) {
-        stderr = stderr.slice(-MAX);
-        stderrTruncated = true;
-      }
-    });
-    child.on("error", (err) => {
-      clearTimeout(timer);
-      stderr += err.message;
-      finish(1);
-    });
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      finish(code ?? 0);
-    });
-  });
 }

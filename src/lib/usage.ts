@@ -28,22 +28,22 @@ export interface PlanLimits {
 
 /**
  * Local mirror of `public.plan_limits`. Kept in sync with
- * `supabase/migrations/20260101000000_baseline_schema.sql` — the DB row is the
- * authority, this only covers signed-out / offline use.
+ * `supabase/migrations/20260803210000_generous_plan_limits.sql` — the DB row
+ * is the authority, this only covers signed-out / offline use.
  */
 export const PLANS: Record<UsagePlanId, PlanLimits> = {
   free: {
     id: "free",
     label: "Free",
-    tokens5h: 20_000,
-    tokensWeek: 80_000,
+    tokens5h: 50_000,
+    tokensWeek: 300_000,
     credits: 0,
   },
   pro: {
     id: "pro",
     label: "Pro",
-    tokens5h: 150_000,
-    tokensWeek: 750_000,
+    tokens5h: 400_000,
+    tokensWeek: 2_000_000,
     credits: 0,
   },
 };
@@ -270,7 +270,10 @@ export function canSpend(data: UsageStateData, costTokens: number): SpendGate {
   const limits = effectiveLimits(data);
   const h5left = limits.tokens5h - data.h5.used;
   const weekLeft = limits.tokensWeek - data.week.used;
-  const pool = Math.min(h5left, weekLeft) + data.credits;
+  // Clamp like the server does (`greatest(0, …)` in spend_tokens): windows can
+  // sit above their limit after a plan downgrade or a local overshoot, and a
+  // negative room must not eat into credits the server would still accept.
+  const pool = Math.max(0, Math.min(h5left, weekLeft)) + data.credits;
   if (pool >= cost) return { ok: true };
   if (h5left + data.credits < cost) {
     return { ok: false, code: "h5_exhausted", endsAt: data.h5.endsAt };

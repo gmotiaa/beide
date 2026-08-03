@@ -338,9 +338,13 @@ export function UsageSection() {
               id === "pro" ? (
                 <IconSparkles className="size-3.5 text-primary" />
               ) : undefined,
+            // The hosted plan_limits row can drift from the offline PLANS
+            // mirror (it did: 50k/300k live vs 20k/80k mirrored). For the
+            // account's own plan show the server truth; the mirror only
+            // describes plans the server told us nothing about.
             hint: t("settings.planQuota", {
-              h5: formatTokens(PLANS[id].tokens5h),
-              week: formatTokens(PLANS[id].tokensWeek),
+              h5: formatTokens(id === data.plan ? limits.tokens5h : PLANS[id].tokens5h),
+              week: formatTokens(id === data.plan ? limits.tokensWeek : PLANS[id].tokensWeek),
             }),
           }))}
         />

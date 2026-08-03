@@ -2,7 +2,7 @@
 
 **beide** — desktop IDE с AI-агентом на базе [pi](https://github.com/earendil-works). Сделана в Беларуси. Ощущение как Cursor + VS Code, без лишнего.
 
-Windows-first. Модели выбираются в чате и работают через EchoGate по ключу из локального `.env`.
+Windows-first. Модели выбираются в чате и работают **только через beide Cloud**: вход в аккаунт обязателен, лимиты токенов и Pro-модели определяются подпиской.
 
 ---
 
@@ -10,7 +10,7 @@ Windows-first. Модели выбираются в чате и работают
 
 **beide** is a Windows desktop IDE with a built-in AI coding agent (pi SDK). Made in Belarus. Open a folder, edit in Monaco, chat with the agent on the right — Plan mode for research, Agent mode for edits. Permissions default to ask-before-write.
 
-**Requirements:** Node 22+, Windows, and `BEIDE_ECHOGATE_API_KEY` in local `.env`.
+**Requirements:** Node 22+, Windows, and a beide Cloud account (sign-in is mandatory; models are served through the account-gated model proxy).
 
 ```bash
 npm install
@@ -25,11 +25,12 @@ npm run dev
 |---|---|
 | OS | Windows 10/11 |
 | Node | **22+** (разработка велась на 24) |
-| Auth | `BEIDE_ECHOGATE_API_KEY` в локальном `.env` |
+| Auth | аккаунт beide Cloud (вход обязателен) |
 
-Скопируйте [`.env.example`](.env.example) в `.env` и добавьте
-`BEIDE_ECHOGATE_API_KEY`. Файл не попадает в репозиторий. Каталог моделей —
-`src/lib/models.ts`.
+Ключей провайдера в проекте нет вообще: приложение авторизуется в
+модель-прокси Supabase JWT-токеном аккаунта, а сам ключ шлюза живёт только на
+сервере. Каталог моделей — `src/lib/models.ts`; модели с `tier: "pro"`
+доступны только на подписке Pro.
 
 ## Быстрый старт
 
@@ -103,13 +104,14 @@ specs/        # PRODUCT, ARCHITECTURE, MVP checklist (исторические �
 
 Симптом: чат не стримит / `agent not ready` / ошибка модели.
 
-1. Проверьте `BEIDE_ECHOGATE_API_KEY` в локальном `.env`.
-2. Перезапустите `npm run dev` после смены `.env` — main process читает ключ при
-   старте сессии.
+1. Войдите в аккаунт beide Cloud — без сессии у агента нет провайдера.
+2. Проверьте план: Pro-модели на Free откатываются на модель по умолчанию.
 3. Откройте папку (workspace): без неё сессии и чекпойнты недоступны.
-4. Корп. proxy / firewall: Electron main ходит в EchoGate напрямую; нужен обычный HTTPS outbound.
+4. Корп. proxy / firewall: Electron main ходит в beide Cloud (Supabase Edge
+   Functions); нужен обычный HTTPS outbound.
 
-beide **не** пишет ключ в репозиторий и не передаёт его дочерним shell-командам.
+Ключ шлюза существует только на сервере — в процессе приложения его нет,
+дочерним shell-командам передавать нечего.
 
 ## Позиционирование
 
@@ -117,4 +119,5 @@ beide **не** пишет ключ в репозиторий и не перед�
 
 ## Лицензия
 
-MIT
+Проприетарная — см. [LICENSE](LICENSE). Исходники закрыты; использование
+приложения регулируется условиями beide Cloud (аккаунт и подписка).

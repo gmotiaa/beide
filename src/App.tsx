@@ -1,5 +1,4 @@
-import { useEffect } from "react";
-import { AppLayout } from "./components/layout/AppLayout";
+import { Suspense, lazy, useEffect } from "react";
 import { AuthGate } from "./components/onboarding/AuthGate";
 import { FirstRunIntro } from "./components/onboarding/FirstRunIntro";
 import { Onboarding } from "./components/onboarding/Onboarding";
@@ -8,6 +7,13 @@ import { useAgentStore } from "./stores/agent";
 import { useAuthStore } from "./stores/auth";
 import { useSettingsStore } from "./stores/settings";
 import { useUsageStore } from "./stores/usage";
+
+// The IDE shell is the heaviest chunk. Loading it lazily keeps the entry
+// bundle down to the gates (intro / onboarding / auth) so first paint is
+// immediate; the shell chunk streams in behind the boot screen.
+const AppLayout = lazy(() =>
+  import("./components/layout/AppLayout").then((m) => ({ default: m.AppLayout })),
+);
 
 export default function App() {
   const hydrated = useOnboardingStore((s) => s.hydrated);
@@ -75,5 +81,9 @@ export default function App() {
     return <AuthGate />;
   }
 
-  return <AppLayout />;
+  return (
+    <Suspense fallback={<div className="app-boot" />}>
+      <AppLayout />
+    </Suspense>
+  );
 }

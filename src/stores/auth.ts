@@ -242,6 +242,14 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
 
   signOut: async () => {
+    // Stop a streaming turn first: past this point the account token is gone,
+    // so the tail of the run could neither reach the proxy nor be charged —
+    // it kept running and its spend_tokens calls all failed with not_signed_in.
+    try {
+      await getBeide()?.agent.abort();
+    } catch {
+      /* nothing streaming */
+    }
     const sb = getSupabase();
     if (sb) await sb.auth.signOut();
     set({ session: null, user: null, pendingVerifyEmail: null });

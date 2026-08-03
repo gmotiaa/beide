@@ -21,6 +21,7 @@ import {
   type BillingSource,
   type UsageHistoryDay,
 } from "../lib/supabase-billing";
+import { getBeide } from "../lib/ipc";
 
 /** `src/lib/usage.ts` is process-shared and stays language-free; the store localizes. */
 function denialMessage(code: UsageDenialCode | undefined): string {
@@ -46,9 +47,9 @@ interface UsageStore {
   setPlan: (plan: UsagePlanId) => Promise<void>;
   addCredits: (amount?: number) => Promise<void>;
   recordPrompt: (text: string) => Promise<{ ok: boolean; reason?: string }>;
-  recordTools: (count?: number) => Promise<{ ok: boolean; reason?: string }>;
+  recordTools: (count?: number, stepTokens?: number) => Promise<{ ok: boolean; reason?: string }>;
   /** Charge the provider-reported token count for a finished assistant message. */
-  spendActual: (tokens: number) => Promise<void>;
+  spendActual: (tokens: number) => Promise<{ ok: boolean; reason?: string }>;
   resetToday: () => Promise<void>;
   clearError: () => void;
 }
@@ -94,17 +95,22 @@ export const useUsageStore = create<UsageStore>((set, get) => ({
         // Signed out — the AuthGate is (or is about to be) on screen; there is
         // nothing to meter yet.
         set({ data: fallback, source: "none", accountEmail: null, loaded: false });
+        void getBeide()?.agent.setPlan("free");
         return;
       }
       const cloud = await fetchBilling();
       if (cloud) {
+        const usage = normalizeUsage(cloud);
         set({
-          data: normalizeUsage(cloud),
+          data: usage,
           source: "supabase",
           accountEmail: cloud.email ?? null,
           loaded: true,
           error: null,
         });
+        // Main gates Pro-tier models on this value; keep it in lockstep with
+        // the billing snapshot rather than a separate fetch.
+        void getBeide()?.agent.setPlan(usage.plan);
         return;
       }
       // A signed-in account must never silently fall back to anything
@@ -172,12 +178,16 @@ export const useUsageStore = create<UsageStore>((set, get) => ({
     return { ok: true };
   },
 
-  recordTools: async (count = 1) => {
+  recordTools: async (count = 1, stepTokens = 0) => {
     const n = Math.max(1, count);
     // Headroom probe — tools used to run (and charge) unboundedly once a
     // prompt was admitted; the caller aborts the turn on a rejection.
+    // `stepTokens` is the provider-reported cost of the previous step: a far
+    // better predictor of the next one than the flat 400-token placeholder,
+    // which under-estimated agentic steps by an order of magnitude.
+    const cost = Math.max(TOOL_TOKEN_COST * n, Math.floor(stepTokens));
     const data = normalizeUsage(get().data);
-    const gate = canSpend(data, TOOL_TOKEN_COST * n);
+    const gate = canSpend(data, cost);
     if (!gate.ok) {
       set({ data });
       return { ok: false, reason: denialMessage(gate.code) };
@@ -187,13 +197,28 @@ export const useUsageStore = create<UsageStore>((set, get) => ({
 
   spendActual: async (tokens) => {
     const amount = Math.round(tokens);
-    if (!Number.isFinite(amount) || amount <= 0) return;
+    if (!Number.isFinite(amount) || amount <= 0) return { ok: true };
     // Atomic spend_tokens RPC — the server ledger is the authority and
     // hard-blocks past the limit. `res.data` on a rejection is a re-fetched
     // snapshot, not the rejection envelope — safe to trust in both branches.
-    const res = await spendTokensCloud(Math.min(amount, 5_000_000));
+    // One retry on transport failure: a dropped RPC used to lose the charge
+    // forever (the ledger under-counted every network blip).
+    let res = await spendTokensCloud(Math.min(amount, 5_000_000)).catch(() => null);
+    if (!res) {
+      await new Promise((resolve) => setTimeout(resolve, 1_500));
+      res = await spendTokensCloud(Math.min(amount, 5_000_000)).catch(() => null);
+    }
+    if (!res) {
+      set({ error: i18n.t("settings.meteringUnavailable") });
+      return { ok: true }; // transport failure is not a limit rejection
+    }
     if (res.data) set({ data: res.data });
-    if (!res.ok) set({ error: res.message ?? denialMessage(undefined) });
+    if (!res.ok) {
+      const reason = res.message ?? denialMessage(undefined);
+      set({ error: reason });
+      return { ok: false, reason };
+    }
+    return { ok: true };
   },
 
   resetToday: async () => {

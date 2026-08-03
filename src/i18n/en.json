@@ -291,7 +291,7 @@
     "providerApiKey": "API key",
     "providerReady": "Ready",
     "providerNone": "None",
-    "providersFootnote": "The provider key is delivered encrypted from the cloud after sign-in. For development it can be overridden with BEIDE_ECHOGATE_API_KEY in a local .env.",
+    "providersFootnote": "The provider key never leaves beide Cloud: models are reachable only through your account and subscription. There is no local bring-your-own-key mode.",
     "privacyHint": "Local privacy and reset controls",
     "checkpointsHint": "Snapshots before write/edit — you can roll back",
     "filesCount_one": "{{count}} file",

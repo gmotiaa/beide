@@ -7,7 +7,8 @@ import type {
   ChatMention,
 } from "../src/lib/types";
 import { findModel } from "../src/lib/models";
-import { AgentService, runShellCommand } from "./services/agent";
+import type { AgentService } from "./services/agent";
+import { runShellCommand } from "./services/shell";
 import { CheckpointService } from "./services/checkpoints";
 import {
   IpcError,
@@ -23,8 +24,216 @@ import {
 import { PermissionGateway } from "./services/permissions";
 import { SessionService } from "./services/sessions";
 import { SettingsService } from "./services/settings";
-import { TerminalService } from "./services/terminal";
+import type { TerminalService } from "./services/terminal";
 import { WorkspaceService } from "./services/workspace";
+
+type AgentMode = Parameters<AgentService["setMode"]>[0];
+
+/**
+ * Lazy facade over AgentService. agent.ts drags the whole pi SDK with it, and
+ * importing that at boot is the single biggest cost between process start and
+ * a visible window. The gateway buffers the cheap boot-path pushes (window,
+ * access token, workspace root, active session, mode/model) and only performs
+ * the dynamic import when something actually needs the runtime — a prompt, a
+ * completion, provider status. `warm()` lets main preload it in the background
+ * once the window is on screen.
+ */
+export class AgentGateway {
+  private instance: AgentService | null = null;
+  private loading: Promise<AgentService> | null = null;
+
+  private window: BrowserWindow | null = null;
+  private accessToken: string | null = null;
+  private plan: "free" | "pro" | null = null;
+  private workspaceRoot: string | null = null;
+  private session: { id: string | null; messages: Parameters<AgentService["onSessionChanged"]>[1] } | null = null;
+  private mode: AgentMode | null = null;
+  private modelId: string | null = null;
+
+  constructor(
+    private readonly settings: SettingsService,
+    private readonly permissions: PermissionGateway,
+    private readonly checkpoints: CheckpointService,
+    private readonly sessions: SessionService,
+  ) {}
+
+  peek(): AgentService | null {
+    return this.instance;
+  }
+
+  async get(): Promise<AgentService> {
+    if (this.instance) return this.instance;
+    this.loading ??= (async () => {
+      const { AgentService } = await import("./services/agent");
+      const agent = new AgentService(
+        this.settings,
+        this.permissions,
+        this.checkpoints,
+        this.sessions,
+      );
+      agent.setMainWindow(this.window);
+      if (this.accessToken !== null) await agent.setAccessToken(this.accessToken);
+      if (this.plan !== null) agent.setPlan(this.plan);
+      if (this.mode !== null) await agent.setMode(this.mode);
+      if (this.modelId !== null) await agent.setModel(this.modelId);
+      if (this.workspaceRoot !== null) await agent.onWorkspaceChanged(this.workspaceRoot);
+      if (this.session) await agent.onSessionChanged(this.session.id, this.session.messages);
+      this.instance = agent;
+      return agent;
+    })();
+    try {
+      return await this.loading;
+    } catch (error) {
+      // A failed import/construct must not wedge every later call.
+      this.loading = null;
+      throw error;
+    }
+  }
+
+  /** Background preload after the window is visible — never blocks boot. */
+  warm(): void {
+    void this.get().catch((error) => {
+      console.error("[beide] agent warmup failed", error);
+    });
+  }
+
+  setMainWindow(win: BrowserWindow | null): void {
+    this.window = win;
+    this.instance?.setMainWindow(win);
+  }
+
+  async setAccessToken(token: string): Promise<{ ok: boolean }> {
+    this.accessToken = token;
+    if (this.instance) return this.instance.setAccessToken(token);
+    return { ok: true };
+  }
+
+  async setPlan(plan: "free" | "pro"): Promise<void> {
+    this.plan = plan;
+    this.instance?.setPlan(plan);
+  }
+
+  async onWorkspaceChanged(root: string | null): Promise<void> {
+    this.workspaceRoot = root;
+    if (this.instance) await this.instance.onWorkspaceChanged(root);
+  }
+
+  async onSessionChanged(
+    id: string | null,
+    messages: Parameters<AgentService["onSessionChanged"]>[1],
+  ): Promise<void> {
+    this.session = { id, messages };
+    if (this.instance) await this.instance.onSessionChanged(id, messages);
+  }
+
+  async setMode(mode: AgentMode): Promise<void> {
+    this.mode = mode;
+    if (this.instance) await this.instance.setMode(mode);
+  }
+
+  async setModel(modelId: string): Promise<void> {
+    this.modelId = modelId;
+    if (this.instance) await this.instance.setModel(modelId);
+  }
+
+  /** Fresh instances read current settings at creation — no-op when unloaded. */
+  async refreshPermissionMode(): Promise<void> {
+    await this.instance?.refreshPermissionMode();
+  }
+
+  /** No running agent means nothing to abort / no pending permission. */
+  async abort(): Promise<void> {
+    await this.instance?.abort();
+  }
+
+  respondPermission(id: string, allow: boolean, content?: string): void {
+    this.instance?.respondPermission(id, allow, content);
+  }
+
+  async dispose(): Promise<void> {
+    const pending = this.loading;
+    this.loading = null;
+    if (!this.instance && pending) {
+      try {
+        await pending;
+      } catch {
+        /* failed load — nothing to dispose */
+      }
+    }
+    const agent = this.instance;
+    this.instance = null;
+    if (agent) await agent.dispose();
+  }
+}
+
+/**
+ * Same lazy trick for the PTY terminal: `@lydell/node-pty` is a native module
+ * whose load also sits on the boot path. Nothing needs a PTY until the user
+ * opens the terminal panel, so the import waits for the first create()/
+ * listShells(). Sync calls on live terminals no-op while unloaded — an
+ * unloaded service cannot have running terminals.
+ */
+export class TerminalGateway {
+  private instance: TerminalService | null = null;
+  private loading: Promise<TerminalService> | null = null;
+  private window: BrowserWindow | null = null;
+  private workspaceRoot: string | null = null;
+
+  private async get(): Promise<TerminalService> {
+    if (this.instance) return this.instance;
+    this.loading ??= import("./services/terminal").then(({ TerminalService }) => {
+      const terminal = new TerminalService();
+      terminal.setMainWindow(this.window);
+      terminal.onWorkspaceChanged(this.workspaceRoot);
+      this.instance = terminal;
+      return terminal;
+    });
+    try {
+      return await this.loading;
+    } catch (error) {
+      this.loading = null;
+      throw error;
+    }
+  }
+
+  setMainWindow(win: BrowserWindow | null): void {
+    this.window = win;
+    this.instance?.setMainWindow(win);
+  }
+
+  onWorkspaceChanged(root: string | null): void {
+    this.workspaceRoot = root;
+    this.instance?.onWorkspaceChanged(root);
+  }
+
+  async listShells(): Promise<ReturnType<TerminalService["listShells"]>> {
+    return (await this.get()).listShells();
+  }
+
+  async create(
+    ...args: Parameters<TerminalService["create"]>
+  ): Promise<ReturnType<TerminalService["create"]>> {
+    return (await this.get()).create(...args);
+  }
+
+  write(id: string, data: string): void {
+    this.instance?.write(id, data);
+  }
+
+  resize(id: string, cols: number, rows: number): void {
+    this.instance?.resize(id, cols, rows);
+  }
+
+  kill(id: string): void {
+    this.instance?.kill(id);
+  }
+
+  dispose(): void {
+    this.instance?.dispose();
+    this.instance = null;
+    this.loading = null;
+  }
+}
 
 export interface BeideServices {
   workspace: WorkspaceService;
@@ -32,8 +241,8 @@ export interface BeideServices {
   permissions: PermissionGateway;
   checkpoints: CheckpointService;
   sessions: SessionService;
-  agent: AgentService;
-  terminal: TerminalService;
+  agent: AgentGateway;
+  terminal: TerminalGateway;
 }
 
 export function createServices(): BeideServices {
@@ -43,8 +252,8 @@ export function createServices(): BeideServices {
   const permissions = new PermissionGateway();
   const checkpoints = new CheckpointService();
   const sessions = new SessionService();
-  const agent = new AgentService(settings, permissions, checkpoints, sessions);
-  const terminal = new TerminalService();
+  const agent = new AgentGateway(settings, permissions, checkpoints, sessions);
+  const terminal = new TerminalGateway();
   return {
     workspace,
     settings,
@@ -356,7 +565,7 @@ export function registerIpc(
       }
       parsed.codebaseContext = blocks.join("\n\n").slice(0, 24_000);
     }
-    return svc().agent.prompt(parsed);
+    return (await svc().agent.get()).prompt(parsed);
   });
 
   rehandle("agent:abort", async () => {
@@ -389,9 +598,9 @@ export function registerIpc(
     },
   );
 
-  rehandle("agent:getStatus", async () => svc().agent.getStatus());
+  rehandle("agent:getStatus", async () => (await svc().agent.get()).getStatus());
 
-  rehandle("agent:getProviders", async () => svc().agent.getProviders());
+  rehandle("agent:getProviders", async () => (await svc().agent.get()).getProviders());
 
   rehandle("agent:setAccessToken", async (_e, token: unknown) => {
     // Supabase JWTs are ~1 KiB; 16 KiB leaves headroom for future claims.
@@ -399,7 +608,13 @@ export function registerIpc(
     return svc().agent.setAccessToken(t);
   });
 
-  rehandle("agent:health", async () => svc().agent.probeGateway());
+  rehandle("agent:setPlan", async (_e, plan: unknown) => {
+    const p = asString(plan ?? "free", "plan", 16);
+    await svc().agent.setPlan(p === "pro" ? "pro" : "free");
+    return { ok: true };
+  });
+
+  rehandle("agent:health", async () => (await svc().agent.get()).probeGateway());
 
   // ── One-shot AI completions (inline edit / ghost text / commit msg) ──
   rehandle("ai:complete", async (_e, payload: unknown) => {
@@ -409,7 +624,7 @@ export function registerIpc(
       model?: unknown;
       maxTokens?: unknown;
     };
-    return svc().agent.complete({
+    return (await svc().agent.get()).complete({
       prompt: asString(p.prompt, "prompt", 64_000),
       system: asOptionalString(p.system, "system", 16_000),
       model: asOptionalString(p.model, "model", 128),

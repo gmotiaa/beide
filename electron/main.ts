@@ -1,8 +1,6 @@
 import { app, BrowserWindow, dialog, nativeImage, shell } from "electron";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-// electron-updater is CJS; named imports break under the ESM main bundle.
-import electronUpdater from "electron-updater";
 import { createServices, disposeServices, registerIpc, type BeideServices } from "./ipc";
 
 /**
@@ -14,8 +12,9 @@ import { createServices, disposeServices, registerIpc, type BeideServices } from
 // scripts/supabase-setup.mjs needs them and it reads .env itself. Loading them
 // into the app's env would put admin credentials one `env` away from any child
 // shell the agent drives.
+// BEIDE_ECHOGATE_API_KEY is gone on purpose: models are reachable exclusively
+// through beide Cloud (account-gated model proxy) — there is no local-key mode.
 const ENV_ALLOWLIST = new Set([
-  "BEIDE_ECHOGATE_API_KEY",
   "BEIDE_OPEN_DEVTOOLS",
   "VITE_SUPABASE_URL",
   "VITE_SUPABASE_ANON_KEY",
@@ -132,6 +131,12 @@ function createWindow(): BrowserWindow {
 
   win.on("ready-to-show", () => {
     win.show();
+    // The window is on screen — now preload the agent runtime (pi SDK) and
+    // check for updates in the background, off the boot critical path.
+    setTimeout(() => {
+      services?.agent.warm();
+      void setupAutoUpdate();
+    }, 800);
   });
 
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -174,8 +179,14 @@ function createWindow(): BrowserWindow {
  * Unsigned builds still update, but Windows shows the unknown-publisher
  * prompt on the swap — signing needs a real certificate (docs/KNOWN-GAPS.md).
  */
-function setupAutoUpdate(): void {
+let updaterStarted = false;
+
+async function setupAutoUpdate(): Promise<void> {
+  if (updaterStarted) return;
+  updaterStarted = true;
   if (!app.isPackaged || process.env.PORTABLE_EXECUTABLE_FILE) return;
+  // electron-updater is CJS and not needed to show the window — load it late.
+  const { default: electronUpdater } = await import("electron-updater");
   const { autoUpdater } = electronUpdater;
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
@@ -233,7 +244,6 @@ if (!gotLock) {
 
   app.whenReady().then(() => {
     bootstrap();
-    setupAutoUpdate();
 
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) {

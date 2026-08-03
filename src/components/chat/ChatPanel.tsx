@@ -44,6 +44,7 @@ import { ChatHistory } from "./ChatHistory";
 
 import { useAgentStore } from "../../stores/agent";
 import { useChatStore } from "../../stores/chat";
+import { useUsageStore } from "../../stores/usage";
 import { useWorkspaceStore } from "../../stores/workspace";
 import { toUIMessages } from "../../lib/to-ui-messages";
 import {
@@ -107,6 +108,7 @@ export function ChatPanel() {
   const setModel = useAgentStore((s) => s.setModel);
   const providers = useAgentStore((s) => s.providers);
   const providersLoaded = useAgentStore((s) => s.providersLoaded);
+  const plan = useUsageStore((s) => s.data.plan);
   const retryNotice = useAgentStore((s) => s.retryNotice);
   const send = useAgentStore((s) => s.send);
   const abort = useAgentStore((s) => s.abort);
@@ -333,12 +335,16 @@ export function ChatPanel() {
    * renders empty.
    */
   const modelOptions = useMemo(() => {
+    // Pro-tier models stay visible on Free (so the tier is discoverable) but
+    // are not selectable; the "· Pro" suffix says why. Main enforces the same
+    // gate, the model-proxy enforces it authoritatively.
+    const proLocked = plan !== "pro";
     const withGroups = (list: typeof MODEL_OPTIONS) =>
-      list.map(({ id, name, version, vendor, disabled }) => ({
+      list.map(({ id, name, version, vendor, disabled, tier }) => ({
         id,
         name,
-        version,
-        disabled,
+        version: tier === "pro" ? `${version} · Pro` : version,
+        disabled: disabled || (tier === "pro" && proLocked),
         group: VENDOR_LABELS[vendor],
       }));
     if (!providers.length) return withGroups(MODEL_OPTIONS);
@@ -351,7 +357,7 @@ export function ChatPanel() {
     );
     if (!allowed.length) return withGroups(MODEL_OPTIONS);
     return withGroups(allowed);
-  }, [providers, model]);
+  }, [providers, model, plan]);
 
   const status: ChatStatus = streaming
     ? "streaming"
@@ -412,7 +418,11 @@ export function ChatPanel() {
       }
       const text = (content ?? "").trim();
       if (!text && images.length === 0) return;
-      void send(text);
+      // The input bar clears itself synchronously on submit, but the limit
+      // gate inside send() is async — a refusal used to eat the typed prompt.
+      void send(text).then((dispatched) => {
+        if (!dispatched) setDraft(text);
+      });
     },
     [
       ready,

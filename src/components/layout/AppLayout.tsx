@@ -13,13 +13,29 @@ import { StatusBar } from "./StatusBar";
 import { TitleBar } from "./TitleBar";
 import { FileTree } from "../sidebar/FileTree";
 import { SearchPanel } from "../sidebar/SearchPanel";
-import { GitPanel } from "../git/GitPanel";
-import { ChatPanel } from "../chat/ChatPanel";
-import { DiffModal } from "../diff/DiffModal";
 import { Tour } from "../onboarding/Tour";
-import { SettingsView } from "../settings/SettingsView";
-import { PreviewPanel } from "../preview/PreviewPanel";
-import { TerminalPanel } from "../terminal/TerminalPanel";
+
+// Heavy panels load on demand: the chat drags the agent-elements stack, the
+// settings/git/preview/terminal/diff surfaces are hidden at first paint. Only
+// the shell chrome (title bar, activity bar, file tree, status bar) is eager.
+const GitPanel = lazy(() =>
+  import("../git/GitPanel").then((m) => ({ default: m.GitPanel })),
+);
+const ChatPanel = lazy(() =>
+  import("../chat/ChatPanel").then((m) => ({ default: m.ChatPanel })),
+);
+const DiffModal = lazy(() =>
+  import("../diff/DiffModal").then((m) => ({ default: m.DiffModal })),
+);
+const SettingsView = lazy(() =>
+  import("../settings/SettingsView").then((m) => ({ default: m.SettingsView })),
+);
+const PreviewPanel = lazy(() =>
+  import("../preview/PreviewPanel").then((m) => ({ default: m.PreviewPanel })),
+);
+const TerminalPanel = lazy(() =>
+  import("../terminal/TerminalPanel").then((m) => ({ default: m.TerminalPanel })),
+);
 import { Resizer } from "../common/Resizer";
 import { useWorkspaceStore } from "../../stores/workspace";
 import { useEditorStore } from "../../stores/editor";
@@ -239,7 +255,9 @@ export function AppLayout() {
                 {activity === "search" ? (
                   <SearchPanel />
                 ) : activity === "git" ? (
-                  <GitPanel />
+                  <Suspense fallback={null}>
+                    <GitPanel />
+                  </Suspense>
                 ) : (
                   <FileTree />
                 )}
@@ -252,9 +270,13 @@ export function AppLayout() {
         <div className="app-main">
           <div className="app-center">
             {showSettings ? (
-              <SettingsView />
+              <Suspense fallback={<div className="app-boot" />}>
+                <SettingsView />
+              </Suspense>
             ) : showPreview ? (
-              <PreviewPanel />
+              <Suspense fallback={<div className="app-boot" />}>
+                <PreviewPanel />
+              </Suspense>
             ) : (
               <Suspense fallback={<div className="app-boot" />}>
                 <EditorArea />
@@ -264,7 +286,9 @@ export function AppLayout() {
             {chatOpen && (
               <>
                 <Resizer direction="vertical" onResize={onChatResize} />
-                <ChatPanel />
+                <Suspense fallback={<div className="app-boot" />}>
+                  <ChatPanel />
+                </Suspense>
               </>
             )}
           </div>
@@ -272,7 +296,9 @@ export function AppLayout() {
           {termOpen && (
             <>
               <Resizer direction="horizontal" onResize={onTermResize} />
-              <TerminalPanel onClose={() => setTermOpen(false)} />
+              <Suspense fallback={null}>
+                <TerminalPanel onClose={() => setTermOpen(false)} />
+              </Suspense>
             </>
           )}
         </div>
@@ -282,7 +308,9 @@ export function AppLayout() {
           intro / onboarding, so this cannot overlap them. Shows once, keyed
           on localStorage "beide.tourDone" (see Tour.tsx). */}
       <Tour />
-      <DiffModal />
+      <Suspense fallback={null}>
+        <DiffModal />
+      </Suspense>
       <CommandPalette
         open={paletteOpen}
         onClose={() => setPaletteOpen(false)}

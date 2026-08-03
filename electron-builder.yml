@@ -1,6 +1,7 @@
-# Packaging config for electron-builder (Windows targets).
-# Run `npm run package:win` — it builds into out/ first, then writes installers
-# to release/. See docs/DEVELOPMENT.md.
+# Packaging config for electron-builder (Windows + macOS targets).
+# Windows: `npm run package:win` locally or CI. macOS: dmg/zip can only be
+# built on a macOS host — .github/workflows/release.yml runs a macos-latest
+# job for that. See docs/DEVELOPMENT.md.
 appId: by.beide.ide
 productName: beide
 copyright: Copyright © 2026 beide
@@ -20,6 +21,21 @@ files:
   - "!node_modules/@monaco-editor/**"
   - "!node_modules/@tabler/**"
   - "!node_modules/lucide-react/**"
+  # More renderer-only packages Vite already bundled into out/renderer.
+  # Dropping them shrinks app.asar → less I/O on cold start and a smaller
+  # installer. The pi SDK depends on none of these (verified via its deps).
+  - "!node_modules/react/**"
+  - "!node_modules/react-dom/**"
+  - "!node_modules/scheduler/**"
+  - "!node_modules/@base-ui/**"
+  - "!node_modules/@pierre/**"
+  - "!node_modules/@streamdown/**"
+  - "!node_modules/@supabase/**"
+  - "!node_modules/i18next/**"
+  - "!node_modules/react-i18next/**"
+  - "!node_modules/zustand/**"
+  - "!node_modules/**/*.map"
+  - "!node_modules/**/*.md"
 
 asar: true
 # pi resolves paths inside its own package at runtime and spawns helpers, so it
@@ -45,6 +61,23 @@ win:
       arch: [x64]
     - target: portable
       arch: [x64]
+
+# macOS: unsigned build (no Apple Developer cert yet) — Gatekeeper shows the
+# right-click-to-open prompt. electron-builder converts build/icon.png
+# (1024×1024) into the .icns automatically. zip is required alongside dmg for
+# electron-updater on macOS.
+mac:
+  icon: build/icon.png
+  category: public.app-category.developer-tools
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    - target: zip
+      arch: [arm64, x64]
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
+dmg:
+  artifactName: ${productName}-${version}-${arch}.${ext}
 
 nsis:
   oneClick: false

@@ -31,6 +31,7 @@ escalation hole open). Migrations replaced it.
 | `20260801120000_model_credentials_delivery` | locked `model_credentials` table + authenticated-only `get_encrypted_model_api_key()` |
 | `20260801150000_chat_sessions_cloud_backup` | `chat_sessions` table — owner-only RLS, directly readable/writable by `authenticated` |
 | `20260801190000_beta_plan_limits` | beta quotas: free 20k/5h · 80k/wk, pro 150k/5h · 750k/wk (mirrored in `src/lib/usage.ts`) |
+| `20260803210000_generous_plan_limits` | generous quotas + hosted-drift reconcile: free 50k/5h · 300k/wk, pro 400k/5h · 2M/wk (mirrored in `src/lib/usage.ts`) |
 
 The baseline is registered as already-applied on the hosted project, so
 `supabase db push` starts from the second file.
